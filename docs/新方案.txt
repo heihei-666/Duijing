@@ -1,0 +1,751 @@
+﻿个人成长工作台 · 完整技术方案
+
+本文档为最终交付版，供开发 Agent 直接参照执行。所有产品决策已锁定，技术选型已确定，AI 策略已整合。
+
+---
+
+一、产品定位
+
+一句话： 用 AI 辩论房照见自己，用弱点回环改善自己。
+
+核心闭环：
+
+```text
+AI 辩论房 → 观察弱点/优势 → 用户确认 → 建回环 → 演练 → 撑住率达标 → 原则沉淀
+                ↑                                    ↓
+            事件卡记录 ←──────── 日常实战 ────────→ 破功修订
+```
+
+系统只做三件事：
+
+1. 帮用户发现弱点（AI 辩论房 + 事件卡扫描）
+2. 帮用户改善弱点（回环 + 演练 + 撑住率）
+3. 帮用户沉淀经验（优势库 + 原则库）
+
+明确砍掉： 能力卡、等级、经验值、好友排行、独立待办、传统日记、热点辩题。
+
+---
+
+二、系统模块
+
+2.1 模块清单
+
+```text
+核心引擎
+  AI 辩论房
+
+主战场
+  弱点墙（AI候选 / 观察中 / 改善中 / 暂存）
+  回环（对话式启动，撑住率判定，优势引用）
+
+实战记录
+  事件卡（一句话，关联回环，写 loop_log）
+
+资源与沉淀
+  优势库（AI 观察自动入库 + 轻量确认 + 30 天超时归档）
+  原则库（撑住率达标生成候选，可关联多回环）
+
+入口
+  状态栏（4 块：日期+精力+连续天数 / 今天练什么 / AI 昨天观察到 / 和 AI 辩一轮）
+
+归档
+  垃圾桶（弱点 60 天，优势/原则可恢复）
+
+基础
+  设置 / 个人资料 / 登录
+```
+
+2.2 页面导航
+
+底部 4 Tab：
+
+```text
+[首页]  [辩论]  [弱点]  [资产]
+```
+
+Tab 内容
+首页 状态栏 + 事件卡快捷入口 + 辩论入口
+辩论 新辩论 / 进行中 / 历史
+弱点 弱点墙（四区）
+资产 优势库 / 原则库 / 事件卡历史 / 设置
+
+---
+
+三、核心机制定义
+
+3.1 AI 辩论房
+
+辩题来源优先级：
+
+```text
+P0：用户自己出题（输入场景 → 系统转辩题）
+P1：从弱点库选回环 → 自动生成辩题
+P2：从事件卡选场景 → 自动生成辩题
+P3：AI 根据弱点库生成辩题（连续 3 天没主动出题时推）
+P4：不做
+```
+
+辩论规则：
+
+· 回合制，4–8 轮浮动，AI 根据辩题复杂度决定
+· 每轮字数上限 300 字
+· AI 风格根据用户水平调节（新手温和 / 中级正常 / 高级犀利）
+· 用户可“暂停”查资料，回来继续
+· 用户可“这轮我放弃”
+· 关联回环时，AI 故意制造触发场景，不告知用户
+
+AI 观察四层：
+
+层 观察内容 产出
+论证结构 论点有无支撑、是否偷换概念 思维类弱点/优势
+情绪与防御 被追问后是否回避、硬撑 心智类弱点/优势
+互动策略 是否复述对方、是否提问 沟通类弱点/优势
+语言习惯 反复句式、类比/数据偏好 表达类弱点/优势
+
+观察呈现：
+
+· 辩论结束后给复盘卡片，三块：做得好 / 值得注意 / 如果再来一次
+· 每场最多 1 条优势观察 + 1 条弱点观察 + 1 条替代动作
+· 观察只在辩论结束后给，不在辩论中打断
+· 用户可关闭本轮观察，关闭后不产生弱点/优势数据
+
+多人辩论：
+
+· 默认私密，无观众
+· 用户可邀请，最多 4 人（含发起人）
+· AI 做主持 + 观察，不作为独立辩手
+· AI 观察只对发起人可见
+· 被邀请者看不到发起人的弱点标签、回环、AI 观察
+
+3.2 弱点墙
+
+四区：
+
+```text
+AI 观察候选区（每天最多 1 条，24 小时不确认消失）
+观察中
+改善中
+暂存 / 已降级
+```
+
+便签视觉：
+
+状态 视觉
+AI 观察候选 虚线边、浅灰底、右上角 AI 图标
+观察中 歪贴、虚线边、浅色字
+改善中 正贴、实线边、右上角小回环图标
+暂存 半透明、角上折起
+
+便签角标：
+
+· 普通：演练 3 · 预案 1 · 12天前建
+· AI 候选：来源：09-26 辩论房 · 1 次观察
+
+移动端： 列表态 + 分区折叠，长按改状态
+Web 端： 黑板拖拽，三区 + 垃圾桶
+
+弱点字段：
+
+· 必填：名称、描述、影响领域（工作/关系/情绪/决策/表达/健康/其他）
+· 可选：置信度 1–5 星（默认 3）
+· 来源：AI 观察 / 用户自建
+
+3.3 回环
+
+启动方式： 默认对话式，保留表单入口
+
+对话式流程：
+
+```text
+系统：你刚才说“...”，能说说当时发生了什么吗？
+用户：...
+系统：当时身体有什么感觉？
+用户：...
+系统：下次遇到类似情况，你想怎么做？
+用户：...
+系统：好，这就是你的预案。要现在启用吗？
+```
+
+回环字段：
+
+· 触发场景
+· 身体/情绪信号
+· 应对预案（可从优势库、原则库引用）
+· 回环状态：草稿 / 启用 / 失效重写 / 暂停
+
+演练日志（loop_log）：
+
+· result：撑住 / 破功 / 未触发
+· source：debate / event_card / manual
+· note：一行复盘
+
+稳定度： 不用模糊分数，用“近 30 天撑住率”
+
+```text
+近 30 天：撑住 4 / 触发 6 = 67%
+```
+
+降级： 撑住率 ≥ 80% 且触发次数 ≥ 5 → 提示用户确认 → 移入暂存
+
+破功： 回环进入“待修订”，AI 给替代动作
+
+暂停： 支持，暂停后不推送演练，数据保留
+
+长期 0 触发： 提示“是否降级为观察存档”
+
+3.4 事件卡
+
+入口： 首页 + 记一笔
+
+记录方式：
+
+```text
+[ 发生了什么？ ]
+关联：[ 不关联 ] [ 回环1 ] [ 回环2 ]
+结果：[ 撑住 ] [ 破功 ] [ 未触发 ] [ 不确定 ]
+[ 保存 ]
+```
+
+极简模式： 只写一句，保存后 AI 自动判断关联和结果；不确定时标记“待确认”
+
+AI 扫描：
+
+· 默认每周日夜间自动扫描最近 7 天事件卡
+· 保留“分析最近事件卡”手动按钮
+· 生成弱点候选，进 AI 观察候选区，24 小时不确认消失
+
+3.5 优势库
+
+入库机制：
+
+· AI 观察后自动入库，标记“待确认”
+· 不弹窗，不打断，不强制
+· 已确认的优势才在回环预案中被推荐
+· 待确认超 30 天自动归档
+· 用户可移除，移除后 AI 不再重复入库同一标签
+· AI 只自动入库“高置信度、跨场景重复出现”的优势
+
+字段： id, user_id, name, source, verified, status, created_at, archived_at
+
+3.6 原则库
+
+来源：
+
+来源 置信度
+回环撑住率达标 高
+破功后 AI 替代动作被采纳 低（待验证）
+辩论房结论 中
+用户手动新建 中
+
+状态： 候选 → 启用 → 归档
+
+字段： id, user_id, content, source_type, source_id, status, confidence, pinned, linked_loop_ids, created_at, updated_at
+
+规则：
+
+· 候选不消失，不设 24 小时限制
+· 忽略留痕，AI 不再重复推同一原则
+· 一条原则可关联多个回环
+· 归档可恢复
+· 不进状态栏
+
+3.7 状态栏
+
+四块：
+
+```text
+┌─────────────────────────────────┐
+│ 9/26 周六    😤 精力 72   🔥 12天 │
+├─────────────────────────────────┤
+│ 今天练什么                       │
+│ · 被追问时先承认没想清楚  撑住率 67% >
+│ · 开会被打断先记录        撑住率 40% >
+├─────────────────────────────────┤
+│ AI 昨天观察到                     │
+│ · 被追问时容易防御性重复  [加入] [忽略]│
+├─────────────────────────────────┤
+│ [ 和 AI 辩一轮 ]                 │
+│ [ + 记一笔 ]                     │
+└─────────────────────────────────┘
+```
+
+规则：
+
+· 今天练什么最多 2 条回环
+· 精力/心情可跳过，不填不显示
+· AI 观察候选 24 小时从首次看到算
+· 空状态各块自行收形
+
+3.8 归档机制
+
+对象 归档规则 恢复
+弱点 拖垃圾桶 → archived，60 天倒计时，过期物理删除 拖回黑板 → observing，触发计数保留
+优势 待确认 30 天超时归档 可恢复
+原则 手动归档 可恢复
+AI 观察候选 24 小时，从首次看到算 不恢复
+事件卡 永久保留 —
+
+3.9 通知策略
+
+· 默认不推送
+· 唯一例外：用户主动预约的辩论提醒
+· AI 观察候选只在首页显示，不推送
+· 不催事件卡记录
+
+---
+
+四、技术栈
+
+4.1 前端
+
+项 选择
+框架 React + Vite
+样式 Tailwind CSS
+状态 Zustand
+路由 React Router
+PWA vite-plugin-pwa
+实时 SSE（Server-Sent Events）
+拖拽（Web 弱点墙） dnd-kit
+
+不用 Next.js。 页面大部分是客户端交互，SSR 收益低，Next.js 在 2C2G 上构建和运行内存占用更高。
+
+4.2 后端
+
+项 选择
+语言 Python 3.12
+框架 FastAPI
+ASGI Uvicorn
+ORM SQLAlchemy 2.0 + aiosqlite
+数据库 SQLite + WAL
+认证 JWT + httpOnly Cookie
+定时任务 APScheduler
+进程管理 systemd（配 MemoryMax）
+
+为什么 FastAPI 不用 Flask：
+
+· FastAPI 原生支持 SSE，辩论房流式输出刚需
+· FastAPI 内存占用比 Flask 低 30%+
+· FastAPI 不依赖 Redis 等额外中间件
+· FastAPI 基于 Pydantic 自动请求验证，自带 Swagger 文档
+· FastAPI 异步与 AI 流式 API 对接是 Python 生态最成熟路径
+
+SSE 实现： from sse_starlette.sse import EventSourceResponse
+
+4.3 AI 层
+
+任务 模型
+辩论房对话 DeepSeek V4.1 Flash
+复盘卡片生成 MiMo V2.6 Flash
+辩题生成 MiMo V2.6 Flash
+事件卡扫描 MiMo V2.6 Flash（延迟队列）
+对话式回环启动 MiMo V2.6 Flash
+弱点/优势候选生成 MiMo V2.6 Flash
+
+核心原则：需要深度推理的走 DeepSeek，结构化/短输出的走 MiMo。
+
+4.4 数据库
+
+SQLite 配置：
+
+```sql
+PRAGMA journal_mode = WAL;
+PRAGMA synchronous = NORMAL;
+PRAGMA cache_size = -8000;
+PRAGMA busy_timeout = 5000;
+```
+
+表清单：
+
+```text
+user
+user_profile
+daily_state
+weakness_card
+weakness_loop
+loop_log
+advantage
+principle
+event_card
+debate_room
+debate_message
+ai_observation
+archive
+ai_queue
+```
+
+关键表结构：
+
+```sql
+-- weakness_card
+id, user_id, name, description, domain_json,
+status, confidence, source, source_id,
+trigger_count_30d, created_at, archived_at, delete_after
+
+-- weakness_loop
+id, weakness_id, trigger_scene, body_signal, action_plan,
+status, linked_advantage_ids, linked_principle_ids,
+created_at, updated_at
+
+-- loop_log
+id, loop_id, weakness_id, user_id, date,
+result, note, source, source_id, created_at
+
+-- advantage
+id, user_id, name, source, verified, status,
+created_at, archived_at
+
+-- principle
+id, user_id, content, source_type, source_id,
+status, confidence, pinned, linked_loop_ids,
+created_at, updated_at
+
+-- event_card
+id, user_id, content, linked_loop_ids,
+result, analyzed, created_at
+
+-- ai_observation
+id, user_id, type, content, source_type, source_id,
+status, created_at, expires_at
+
+-- ai_queue
+id, user_id, task_type, payload_json,
+status, created_at, processed_at
+```
+
+---
+
+五、AI 成本控制策略
+
+5.1 模型定价（空闲时段，人民币/百万Token）
+
+ DeepSeek V4.1 Flash MiMo V2.6 Flash
+缓存命中输入 0.02 元 0.02 元
+缓存未命中输入 1 元 1 元
+缓存写入 1.25 元 1.25 元
+输出 4 元 2 元
+
+MiMo 输出价格是 DeepSeek 的一半。输出量大的任务用 MiMo。
+
+5.2 缓存前缀结构
+
+所有 AI 调用按此结构拼 Prompt：
+
+```text
+[固定系统 Prompt]          ← 永远不变，缓存
+[用户弱点库摘要]            ← 同一场辩论内不变，缓存
+[用户优势库摘要]            ← 同一场辩论内不变，缓存
+[正在练的回环描述]          ← 同一场辩论内不变，缓存
+────────── 以下可变 ──────────
+[辩题 + 用户立场]
+[历史对话]
+[用户最新发言]
+```
+
+关键：前缀必须从第一个字符开始完全一致。弱点库摘要按 ID 排序，保证稳定。
+
+5.3 路由决策表
+
+任务 触发时机 模型 执行时间
+辩论房对话 用户实时 DeepSeek 立即
+复盘卡片 辩论结束 MiMo 立即
+辩题生成 用户输入场景后 MiMo 立即
+事件卡扫描 用户保存事件卡 MiMo 延迟到夜间
+回环对话 用户点“加入观察” MiMo 立即
+弱点/优势候选 扫描后 MiMo 立即
+
+5.4 批量与错峰
+
+· 事件卡不实时扫描，进队列，每周日 02:00 批量处理
+· 保留手动触发按钮
+· 后台任务全部夜间执行
+
+5.5 月度成本预估
+
+项目 成本
+辩论房（DeepSeek） 0.64 元
+事件卡扫描（MiMo） 0.03 元
+复盘卡片（MiMo） 0.03 元
+辩题/回环对话（MiMo） 0.04 元
+合计 约 0.74 元
+
+即使全部高峰 + 无缓存，不超过 3 元。
+
+---
+
+六、API 设计
+
+6.1 认证
+
+```text
+POST   /api/auth/register
+POST   /api/auth/login
+POST   /api/auth/logout
+GET    /api/auth/me
+```
+
+6.2 状态栏
+
+```text
+GET    /api/status-bar
+POST   /api/daily-state
+```
+
+6.3 辩论房
+
+```text
+GET    /api/debates
+POST   /api/debates
+GET    /api/debates/:id
+POST   /api/debates/:id/messages
+GET    /api/debates/:id/stream      # SSE
+POST   /api/debates/:id/finish
+POST   /api/debates/:id/abandon-round
+```
+
+6.4 弱点
+
+```text
+GET    /api/weaknesses
+POST   /api/weaknesses
+GET    /api/weaknesses/:id
+PATCH  /api/weaknesses/:id
+POST   /api/weaknesses/:id/archive
+POST   /api/weaknesses/:id/restore
+POST   /api/weaknesses/:id/loops
+PATCH  /api/loops/:id
+POST   /api/loops/:id/logs
+GET    /api/loops/:id/logs
+```
+
+6.5 事件卡
+
+```text
+GET    /api/event-cards
+POST   /api/event-cards
+POST   /api/event-cards/analyze     # 手动触发扫描
+```
+
+6.6 优势
+
+```text
+GET    /api/advantages
+POST   /api/advantages/:id/confirm
+POST   /api/advantages/:id/remove
+POST   /api/advantages/:id/restore
+```
+
+6.7 原则
+
+```text
+GET    /api/principles
+POST   /api/principles
+POST   /api/principles/:id/confirm
+POST   /api/principles/:id/ignore
+POST   /api/principles/:id/archive
+POST   /api/principles/:id/restore
+PATCH  /api/principles/:id
+```
+
+6.8 AI 观察
+
+```text
+GET    /api/observations
+POST   /api/observations/:id/accept
+POST   /api/observations/:id/ignore
+```
+
+---
+
+七、部署方案
+
+7.1 服务器
+
+项 配置
+实例 阿里云轻量应用服务器 2vCPU / 2GB / 40G SSD
+带宽 200M 峰值（共享）
+系统 Ubuntu 22.04 LTS
+Swap 1–2GB（必须开）
+
+7.2 内存分配
+
+进程 内存
+系统基础 300–400MB
+FastAPI + Uvicorn 150–300MB
+Nginx 50–100MB
+SQLite 50MB
+剩余 800MB–1.2GB
+
+结论：比 Node.js 更从容。
+
+7.3 Uvicorn 启动
+
+```bash
+uvicorn app.main:app \
+  --host 127.0.0.1 \
+  --port 3000 \
+  --workers 1 \
+  --limit-concurrency 100
+```
+
+2C2G 上建议 1 个 worker，异步已足够。
+
+7.4 systemd 配置
+
+```ini
+[Unit]
+Description=Growth App
+After=network.target
+
+[Service]
+User=app
+WorkingDirectory=/opt/growth-app
+ExecStart=/opt/growth-app/venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 3000 --workers 1
+Restart=always
+RestartSec=5
+MemoryMax=600M
+MemorySwapMax=1G
+
+[Install]
+WantedBy=multi-user.target
+```
+
+7.5 Nginx 配置
+
+```nginx
+server {
+    listen 80;
+    server_name your-domain.com;
+
+    root /var/www/growth-app/dist;
+    index index.html;
+
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+
+    location /api/ {
+        proxy_pass http://127.0.0.1:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Connection '';
+        proxy_buffering off;
+        proxy_read_timeout 300s;
+    }
+
+    location /api/debates/stream {
+        proxy_pass http://127.0.0.1:3000;
+        proxy_buffering off;
+        proxy_cache off;
+        proxy_read_timeout 600s;
+    }
+}
+```
+
+7.6 静态资源
+
+· 前端构建产物上传 OSS + CDN
+· 图片/头像走 OSS
+· 服务器只跑 API 和 SSE
+
+7.7 云监控告警
+
+指标 阈值
+内存使用率 80%
+CPU 持续 70% 超过 5 分钟
+磁盘使用率 80%
+SSE 连接数 100
+
+7.8 备份
+
+```bash
+# 每日 03:00 备份 SQLite 到 OSS
+sqlite3 /data/app.db ".backup /tmp/app-$(date +%F).db"
+ossutil cp /tmp/app-*.db oss://your-bucket/backup/
+```
+
+7.9 安全
+
+项 方案
+认证 JWT + httpOnly Cookie，7 天过期
+API Key 只存服务端环境变量
+限流 辩论房每用户每分钟最多 10 次发言
+CORS 只允许自己的域名
+HTTPS Let's Encrypt 自动续期
+弱点数据 默认私密，分享需用户主动操作
+
+---
+
+八、开发排期
+
+Phase 1：地基（1–2 周）
+
+1. 项目脚手架：FastAPI + React + Vite + SQLite
+2. 用户认证：注册/登录/JWT
+3. 数据库表创建 + 迁移脚本
+4. 基础 UI 框架：4 Tab 导航
+
+Phase 2：核心引擎（2–3 周）
+
+1. AI 路由层 + 缓存前缀结构
+2. 辩论房：开场 → 回合制 → SSE 流式 → 结束
+3. 复盘卡片生成
+4. AI 观察入库
+
+Phase 3：主战场（2–3 周）
+
+1. 弱点墙：四区列表 + AI 候选
+2. 回环：对话式启动 + 表单
+3. 演练日志 + 撑住率计算
+4. 弱点详情页
+
+Phase 4：实战与沉淀（2 周）
+
+1. 事件卡：记录 + 关联 + 结果
+2. 事件卡 AI 扫描（队列 + 定时）
+3. 优势库：自动入库 + 确认 + 归档
+4. 原则库：候选 + 确认 + 关联回环
+
+Phase 5：入口与收口（1–2 周）
+
+1. 状态栏：四块 + 空状态
+2. 垃圾桶 + 归档恢复
+3. 通知策略
+4. PWA 配置
+
+Phase 6：部署与优化（1 周）
+
+1. 阿里云 2C2G 部署
+2. Nginx + systemd + Swap
+3. OSS + CDN
+4. 云监控 + 备份
+
+---
+
+九、关键约束（开发 Agent 必须遵守）
+
+1. 不新增模块。 所有功能必须在上述模块清单内。
+2. 不改 AI 路由规则。 辩论房走 DeepSeek，其余走 MiMo。
+3. 缓存前缀必须从第一个字符开始一致。 弱点库摘要按 ID 排序。
+4. 弱点数据默认私密。 任何分享都是用户主动动作。
+5. AI 观察每场最多 1 优势 + 1 弱点 + 1 替代动作。 不许多给。
+6. 状态栏只做轻操作。 不能写日记、建原则、开辩论。
+7. 所有经验变动必须写 loop_log。 不直接改弱点状态。
+8. 回环降级必须用户确认。 不自动降级。
+9. AI 观察候选 24 小时。 从首次看到算，不是从生成算。
+10. 通知默认关闭。 唯一例外是用户主动预约的辩论提醒。
+
+---
+
+十、一句话收口
+
+```text
+状态栏看今天练什么，辩论房照见自己，弱点墙管工单，回环是 SOP，
+事件卡记实战，优势库是资源，原则库是沉淀，垃圾桶是归档。
+所有 AI 只做两件事：观察，和演练。
+```
+
+核心数据流两条：
+
+1. 辩论房/事件卡 → ai_observation → 弱点/优势 → 回环 → loop_log → 撑住率
+2. 回环撑住率达标 → principle 候选 → 原则启用 → 反向挂回环
+
+这两条不断，系统就活着。

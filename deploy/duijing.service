@@ -1,0 +1,53 @@
+# 对镜 · systemd 服务单元
+#
+# 对应方案文档 7.4。
+# 部署位置：/etc/systemd/system/duijing.service
+#
+# 内存上限 600M 是 2C2G 机器上的保守值（方案 7.2 的分配表里
+# FastAPI + Uvicorn 占 150–300MB，留出余量应对复盘生成时的峰值）。
+
+[Unit]
+Description=对镜 · 个人成长工作台
+Documentation=https://gitee.com/heihei-666/qingyu-diary
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=app
+Group=app
+WorkingDirectory=/opt/duijing
+
+# 环境变量从 .env 读，权属 app:app 且 600，避免密钥泄露
+EnvironmentFile=/opt/duijing/.env
+
+ExecStart=/opt/duijing/venv/bin/uvicorn app.main:app \
+    --host 127.0.0.1 \
+    --port 3000 \
+    --workers 1 \
+    --limit-concurrency 100 \
+    --proxy-headers \
+    --forwarded-allow-ips=127.0.0.1
+
+Restart=always
+RestartSec=5
+
+# ── 资源限制（2C2G 机器防 OOM） ──────────────────────────
+MemoryMax=600M
+MemorySwapMax=1G
+TasksMax=256
+
+# ── 安全加固 ──────────────────────────────────────────────
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/opt/duijing/data
+
+# ── 日志 ──────────────────────────────────────────────────
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=duijing
+
+[Install]
+WantedBy=multi-user.target

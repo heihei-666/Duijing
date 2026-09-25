@@ -1,0 +1,290 @@
+﻿配色方案 v1.0
+
+一、整体基调
+
+这个系统的主战场是弱点和复盘，不是游戏化养成。配色不能太活泼，也不能太压抑。
+
+基调：低饱和暖灰底 + 克制点缀色。像一本有质感的笔记本，不像一个RPG游戏。
+
+· 底色偏暖灰，减少长时间阅读疲劳
+· 弱点用暖色系，但不刺眼
+· AI 相关用冷色系，和用户内容区分
+· 状态变化靠明度/透明度，不靠色相跳变
+
+---
+
+二、基础色板
+
+中性色（全局底色）
+
+名称 色值 用途
+bg-base #F7F6F3 页面底色，暖灰
+bg-surface #FFFFFF 卡片、面板
+bg-elevated #F0EEE9 输入框、次级面板
+bg-inset #E8E5DF 内嵌区域、代码块
+border-light #E5E2DB 分割线、边框
+border-strong #D4D0C7 强调边框
+text-primary #2C2A26 主文字，暖黑
+text-secondary #6B6760 次级文字
+text-tertiary #9C9790 辅助文字、占位
+text-disabled #C4C0B8 禁用态
+
+主色（品牌色）
+
+名称 色值 用途
+primary #4A6FA5 主按钮、链接、焦点
+primary-hover #3D5D8A 悬停
+primary-light #E8EEF7 主色浅底
+primary-text #FFFFFF 主色上的文字
+
+主色选灰蓝，不选亮蓝。 因为它需要同时出现在弱点墙（偏暖）和辩论房（偏冷）里，不能太抢。
+
+功能色
+
+名称 色值 用途
+success #5B8C6B 撑住、已确认、达标
+success-light #EAF2EC 撑住浅底
+warning #C4944A 待修订、待确认、提示
+warning-light #F7F0E4 警告浅底
+danger #B85C5C 破功、丢弃、归档
+danger-light #F7EAEA 危险浅底
+info #5A7FA8 AI 相关、系统提示
+info-light #EAF0F6 信息浅底
+
+所有功能色都降饱和。 不用 #FF0000 这种红，用 #B85C5C 这种砖红。
+
+---
+
+三、弱点便签配色
+
+这是系统里最需要区分状态的组件。
+
+AI 观察候选
+
+属性 色值
+便签底 #EEF2F7（冷灰蓝，和用户内容区分）
+边框 #C5D3E3 虚线
+文字 #4A6FA5
+角标 #8FA8C4
+AI 图标 #5A7FA8
+
+冷色 = AI 给的，不是你的。 用户一眼能看出这条是系统观察，不是自己写的。
+
+观察中
+
+属性 色值
+便签底 #FBF6E8（暖黄，像便签纸）
+边框 #E8DCC0 虚线
+文字 #8A7A5C
+角标 #B8A88C
+歪贴 旋转 -1.5deg
+
+暖黄 = 待处理，像一张还没贴正的便签。
+
+改善中
+
+属性 色值
+便签底 #FFFFFF（白，正贴）
+边框 #D4D0C7 实线
+文字 #2C2A26
+回环图标 #4A6FA5
+角标 #9C9790
+旋转 0deg
+
+白色实线 = 正在练，正式工单。
+
+暂存 / 已降级
+
+属性 色值
+便签底 #F0EEE9 半透明
+边框 #E5E2DB
+文字 #9C9790
+折角 #D4D0C7
+透明度 0.6
+
+灰 + 半透明 = 不活跃，但还在。
+
+便签状态色汇总
+
+状态 底色 边框 文字
+AI 候选 #EEF2F7 #C5D3E3 虚线 #4A6FA5
+观察中 #FBF6E8 #E8DCC0 虚线 #8A7A5C
+改善中 #FFFFFF #D4D0C7 实线 #2C2A26
+暂存 #F0EEE9 #E5E2DB #9C9790
+
+四种状态，从冷到暖再到灰，色相变化不超过 60 度。 不花，但能分清。
+
+---
+
+四、撑住率配色
+
+撑住率是回环的核心指标，需要有视觉反馈。
+
+撑住率 颜色 说明
+0–40% #B85C5C 破功多，还在挣扎
+40–60% #C4944A 一半一半
+60–80% #5B8C6B 在改善
+80–100% #4A8C5C 达标，可降级
+
+进度条用横向条，不用环形。 横向条在列表里更容易扫视。
+
+```text
+被追问时先承认没想清楚
+████████░░░░░░░░  67%
+```
+
+---
+
+五、辩论房配色
+
+辩论房是训练场，需要和弱点墙有视觉区分，但不过度。
+
+辩论中
+
+元素 色值
+背景 #F7F6F3
+用户气泡底 #4A6FA5，文字 #FFFFFF
+AI 气泡底 #FFFFFF，边框 #E5E2DB，文字 #2C2A26
+辩题栏 #2C2A26 底，#FFFFFF 字
+轮次指示 #9C9790
+发送按钮 #4A6FA5
+
+用户蓝色，AI 白色。 一眼分清谁在说。
+
+复盘卡片
+
+块 底色 边框 标题色
+做得好 #EAF2EC #C5DCC9 #5B8C6B
+值得注意 #F7F0E4 #E0D0B0 #C4944A
+如果再来一次 #EAF0F6 #C5D3E3 #5A7FA8
+
+三块三色，对应三种态度：肯定 / 提醒 / 建议。
+
+---
+
+六、状态栏配色
+
+状态栏是首页，要最克制。
+
+元素 色值
+背景 #FFFFFF
+日期文字 #6B6760
+精力数字 #2C2A26
+连续天数 #C4944A（火苗色）
+“今天练什么”标题 #6B6760 小字
+回环条目 #2C2A26
+撑住率数字 按撑住率色板
+AI 观察块 #EEF2F7 底
+辩论按钮 #4A6FA5 底，#FFFFFF 字
+记一笔按钮 #F0EEE9 底，#2C2A26 字
+
+状态栏只有两个彩色元素：连续天数的火苗色，和辩论按钮。 其余全是中性色。
+
+---
+
+七、优势库配色
+
+优势库是资源，不是成就墙。要温和，不炫耀。
+
+元素 色值
+待确认优势 #EEF2F7 底，#4A6FA5 文字
+已确认优势 #FFFFFF 底，#2C2A26 文字
+归档优势 #F0EEE9 底，#9C9790 文字
+确认按钮 #5B8C6B
+移除按钮 #9C9790 文字
+
+不用金色、不用奖杯色。 优势是拿来用的，不是拿来炫的。
+
+---
+
+八、原则库配色
+
+元素 色值
+候选 #FBF6E8 底，#8A7A5C 文字
+启用中 #FFFFFF 底，#2C2A26 文字
+置顶 #4A6FA5 星标
+归档 #F0EEE9 底，#9C9790 文字
+来源标签 #EAF0F6 底，#5A7FA8 文字
+
+候选用暖黄，和弱点“观察中”一致。 都是待处理状态。
+
+---
+
+九、深色模式（P1 后置）
+
+MVP 不做深色模式。如果要做，参考：
+
+亮色 深色
+#F7F6F3 #1A1917
+#FFFFFF #242320
+#2C2A26 #E8E5DF
+#4A6FA5 #6B8FC5
+
+深色模式不是简单反色。 暖灰底要换成暖黑底，主色要提亮。
+
+---
+
+十、CSS 变量
+
+```css
+:root {
+  /* 中性 */
+  --bg-base: #F7F6F3;
+  --bg-surface: #FFFFFF;
+  --bg-elevated: #F0EEE9;
+  --bg-inset: #E8E5DF;
+  --border-light: #E5E2DB;
+  --border-strong: #D4D0C7;
+  --text-primary: #2C2A26;
+  --text-secondary: #6B6760;
+  --text-tertiary: #9C9790;
+  --text-disabled: #C4C0B8;
+
+  /* 主色 */
+  --primary: #4A6FA5;
+  --primary-hover: #3D5D8A;
+  --primary-light: #E8EEF7;
+
+  /* 功能 */
+  --success: #5B8C6B;
+  --success-light: #EAF2EC;
+  --warning: #C4944A;
+  --warning-light: #F7F0E4;
+  --danger: #B85C5C;
+  --danger-light: #F7EAEA;
+  --info: #5A7FA8;
+  --info-light: #EAF0F6;
+
+  /* 弱点便签 */
+  --sticky-ai-bg: #EEF2F7;
+  --sticky-ai-border: #C5D3E3;
+  --sticky-ai-text: #4A6FA5;
+  --sticky-observing-bg: #FBF6E8;
+  --sticky-observing-border: #E8DCC0;
+  --sticky-observing-text: #8A7A5C;
+  --sticky-improving-bg: #FFFFFF;
+  --sticky-improving-border: #D4D0C7;
+  --sticky-improving-text: #2C2A26;
+  --sticky-archived-bg: #F0EEE9;
+  --sticky-archived-border: #E5E2DB;
+  --sticky-archived-text: #9C9790;
+
+  /* 撑住率 */
+  --rate-low: #B85C5C;
+  --rate-mid: #C4944A;
+  --rate-good: #5B8C6B;
+  --rate-great: #4A8C5C;
+}
+```
+
+---
+
+十一、配色原则
+
+1. 底色永远偏暖。 不用纯白 #FFFFFF 做页面底，用 #F7F6F3。
+2. AI 永远冷色。 用户内容和 AI 内容必须一眼分清。
+3. 弱点状态靠明度和透明度区分，不靠色相跳变。 从冷到暖再到灰，色相变化不超过 60 度。
+4. 功能色全部降饱和。 不用纯红纯绿，用砖红、灰绿。
+5. 状态栏只有两个彩色元素。 连续天数火苗色，和辩论按钮。
+6. 不用金色、奖杯色、游戏化色。 这不是 RPG。
+7. 深色模式后置。 MVP 只做亮色。
