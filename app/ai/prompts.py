@@ -1,0 +1,421 @@
+"""对镜 · Prompt 组装
+
+方案 5.2 的缓存前缀结构，是本文件的核心约束：
+
+    [固定系统 Prompt]      ← 永远不变，缓存
+    [用户弱点库摘要]        ← 同一场辩论内不变，缓存
+    [用户优势库摘要]        ← 同一场辩论内不变，缓存
+    [正在练的回环描述]      ← 同一场辩论内不变，缓存
+    ────────── 以下可变 ──────────
+    [辩题 + 用户立场]
+    [历史对话]
+    [用户最新发言]
+
+关键：前缀必须从第一个字符开始完全一致，弱点库摘要按 ID 排序。
+因此 build_stable_system() 的输出在同一场辩论内是**逐字节稳定**的，
+任何排序不稳定或包含时间戳的写法都会让缓存命中率归零。
+"""
+
+from __future__ import annotations
+
+from collections.abc import Sequence
+
+from app.ai.base import ChatMessage
+
+# ─────────────────────────────────────────────────────────────
+# 固定系统 Prompt —— 这段字符串一旦上线就不要改，
+# 改动会让所有历史缓存失效。要用版本号管理。
+# ─────────────────────────────────────────────────────────────
+
+PROMPT_VERSION = "duijing-sys-v1"
+
+FIXED_SYSTEM_PROMPT = """你是「对镜」里的辩论对手兼观察者。对镜是一个个人成长工具，用户通过和你辩论来照见自己的思维与情绪模式。
+
+【你的双重身份】
+1. 辩手：你就用户的对立面立场进行有力论证，不敷衍、不和稀泥。
+2. 观察者：你全程记录用户的论证结构、情绪与防御、互动策略、语言习惯，但**绝不在辩论过程中说出来**。
+
+【辩论规则】
+- 回合制，总轮次在 4–8 轮之间，由你根据辩题复杂度决定。
+- 用户每轮发言不超过 300 字。
+- 你每轮回复不超过 300 字，要推进论证，不要复述用户的话凑字数。
+- 用户可以说「这轮我放弃」，此时你简短回应并继续，不做嘲讽。
+- 用户可以说「暂停」，暂停后不再主动推进。
+
+【观察四层】只在辩论结束后输出，辩论中一律不提：
+- 论证结构：论点有无支撑、是否偷换概念
+- 情绪与防御：被追问后是否回避、硬撑
+- 互动策略：是否复述对方、是否提问
+- 语言习惯：反复句式、类比或数据偏好
+
+【风格调节】
+- 新手：温和，多给台阶，指出问题前先肯定
+- 中级：正常对抗强度
+- 高级：犀利，直接攻击论证薄弱处
+
+【绝对禁止】
+- 不在辩论中给出任何评价、总结或观察
+- 不使用「作为AI」「我是人工智能」这类自指表述
+- 不说教、不空泛鼓励、不输出与辩题无关的寒暄"""
+
+
+# ─────────────────────────────────────────────────────────────
+# 稳定块（缓存前缀的组成部分）
+# ─────────────────────────────────────────────────────────────
+
+
+def render_weakness_summary(cards: Sequence) -> str:
+    """弱点库摘要。
+
+    **按 ID 升序**输出——方案第九章第 3 条硬性要求。
+    空库时输出固定占位串，不能是空字符串（否则前缀长度会漂移）。
+    """
+    ordered = sorted(cards, key=lambda c: c.id)
+    if not ordered:
+        return "【用户弱点库】\n（暂无记录）"
+
+    lines = ["【用户弱点库】"]
+    for card in ordered:
+        domains = "、".join(card.domains or []) or "未分类"
+        lines.append(
+            f"- #{card.id} {card.name}｜领域：{domains}｜置信度：{card.confidence}/5"
+            f"｜状态：{_weakness_status_cn(card.status)}"
+        )
+        if card.description:
+            lines.append(f"  描述：{card.description.strip()}")
+    return "\n".join(lines)
+
+
+def render_advantage_summary(advantages: Sequence) -> str:
+    """优势库摘要。只列已确认的——方案 3.5：已确认的优势才在预案中被推荐。"""
+    confirmed = sorted(
+        [a for a in advantages if a.status == "confirmed"], key=lambda a: a.id
+    )
+    if not confirmed:
+        return "【用户优势库】\n（暂无已确认优势）"
+
+    lines = ["【用户优势库】"]
+    for adv in confirmed:
+        lines.append(f"- #{adv.id} {adv.name}")
+    return "\n".join(lines)
+
+
+def render_loop_block(loop, weakness) -> str:
+    """正在练的回环描述。这一块决定 AI 会不会「故意制造触发场景」。"""
+    if loop is None:
+        return "【正在练的回环】\n（本场未关联回环，按普通辩题处理）"
+
+    lines = [
+        "【正在练的回环】",
+        f"- 对应弱点：{weakness.name if weakness else '未知'}",
+        f"- 触发场景：{loop.trigger_scene}",
+    ]
+    if loop.body_signal:
+        lines.append(f"- 身体/情绪信号：{loop.body_signal}")
+    if loop.action_plan:
+        lines.append(f"- 用户预案：{loop.action_plan}")
+    lines.append(
+        "本场任务：在不告知用户的前提下，自然地制造接近上述触发场景的对话情境，"
+        "观察用户是否用出预案。不要点破，不要提示。"
+    )
+    return "\n".join(lines)
+
+
+def build_stable_system(
+    weaknesses: Sequence = (),
+    advantages: Sequence = (),
+    loop=None,
+    weakness=None,
+) -> str:
+    """拼接缓存前缀。
+
+    顺序固定：固定 Prompt → 弱点库 → 优势库 → 回环。
+    返回的字符串在同一场辩论内必须逐字节一致。
+    """
+    blocks = [
+        FIXED_SYSTEM_PROMPT,
+        render_weakness_summary(weaknesses),
+        render_advantage_summary(advantages),
+        render_loop_block(loop, weakness),
+    ]
+    return "\n\n".join(blocks)
+
+
+# ─────────────────────────────────────────────────────────────
+# 可变段
+# ─────────────────────────────────────────────────────────────
+
+
+def build_debate_messages(
+    stable_system: str,
+    topic: str,
+    stance: str,
+    history: Sequence,
+    latest_user_content: str,
+    *,
+    level: str = "novice",
+) -> list[ChatMessage]:
+    """辩论房一轮的完整消息列表。
+
+    第 0 条 system = 缓存前缀（稳定），之后才是可变内容。
+    """
+    messages = [ChatMessage(role="system", content=stable_system)]
+
+    header = (
+        f"【辩题】{topic}\n"
+        f"【用户立场】{stance or '未声明'}\n"
+        f"【对手风格】{_level_cn(level)}\n"
+        f"请就用户的对立面展开论证。"
+    )
+    messages.append(ChatMessage(role="system", content=header))
+
+    for item in history:
+        role = "assistant" if item.role == "ai" else "user"
+        # system 类型的落库消息（开场白等）按 assistant 处理
+        if item.role == "system":
+            role = "assistant"
+        messages.append(ChatMessage(role=role, content=item.content))
+
+    messages.append(ChatMessage(role="user", content=latest_user_content))
+    return messages
+
+
+def build_opening_messages(stable_system: str, topic: str, stance: str, *, level: str = "novice"):
+    """辩论开场：AI 先立论。"""
+    return [
+        ChatMessage(role="system", content=stable_system),
+        ChatMessage(
+            role="user",
+            content=(
+                f"【辩题】{topic}\n"
+                f"【用户立场】{stance or '未声明'}\n"
+                f"【对手风格】{_level_cn(level)}\n\n"
+                "请用不超过 200 字开场立论，站在用户的对立面，并抛出第一个问题。"
+                "不要评价用户，不要提观察。"
+            ),
+        ),
+    ]
+
+
+def build_topic_messages(scene: str, weaknesses: Sequence = ()) -> list[ChatMessage]:
+    """辩题生成：把用户输入的场景转成一个可辩的题目。"""
+    weak_hint = ""
+    if weaknesses:
+        names = "；".join(f"#{c.id} {c.name}" for c in sorted(weaknesses, key=lambda c: c.id))
+        weak_hint = f"\n参考用户的弱点库：{names}"
+
+    return [
+        ChatMessage(
+            role="system",
+            content=(
+                "你是辩题设计者。把用户描述的场景转成一道有真实张力的辩题。"
+                "只输出 JSON，不要任何解释文字。"
+                '格式：{"topic": "辩题（20字内，正反可辩）", "stance": "建议用户持有的立场（15字内）"}'
+            ),
+        ),
+        ChatMessage(role="user", content=f"场景：{scene}{weak_hint}"),
+    ]
+
+
+def build_review_messages(
+    topic: str,
+    stance: str,
+    transcript: str,
+    stable_system: str = "",
+    *,
+    level: str = "novice",
+) -> list[ChatMessage]:
+    """复盘卡片生成。
+
+    严格限流：每场最多 1 条优势观察 + 1 条弱点观察 + 1 条替代动作。
+    """
+    system = (
+        "你是「对镜」的辩论观察者。基于整场辩论记录输出复盘卡片。"
+        "只输出 JSON，不要任何解释文字。\n"
+        "严格约束：最多 1 条优势观察、1 条弱点观察、1 条替代动作，不许多给。\n"
+        "观察必须具体到用户的原话或行为，不要泛泛而谈。\n"
+        "JSON 格式：\n"
+        "{\n"
+        '  "good": "做得好的一点（40字内）",\n'
+        '  "notice": "值得注意的一点（40字内）",\n'
+        '  "next_time": "如果再来一次的建议（40字内）",\n'
+        '  "advantage": {"name": "优势标签（12字内）", "reason": "依据（30字内）"},\n'
+        '  "weakness": {"name": "弱点标签（12字内）", "reason": "依据（30字内）"},\n'
+        '  "alternative_action": "下次可以改用的具体动作（40字内）"\n'
+        "}\n"
+        '若某一项确实没有依据，对应值给 null。不要编造。'
+    )
+    user = (
+        f"【辩题】{topic}\n【用户立场】{stance or '未声明'}\n"
+        f"【对手风格】{_level_cn(level)}\n\n【辩论记录】\n{transcript}"
+    )
+    messages = [ChatMessage(role="system", content=system)]
+    if stable_system:
+        # 复用同一份弱点/优势摘要，保持与辩论阶段一致的前缀
+        messages.insert(0, ChatMessage(role="system", content=stable_system))
+    messages.append(ChatMessage(role="user", content=user))
+    return messages
+
+
+def build_event_scan_messages(cards_text: str, weaknesses: Sequence = ()) -> list[ChatMessage]:
+    """事件卡扫描：从最近 7 天的事件卡里发现弱点候选。"""
+    weak_hint = ""
+    if weaknesses:
+        names = "；".join(f"#{c.id} {c.name}" for c in sorted(weaknesses, key=lambda c: c.id))
+        weak_hint = f"\n已存在的弱点（不要重复提出）：{names}"
+
+    return [
+        ChatMessage(
+            role="system",
+            content=(
+                "你是「对镜」的模式识别器。阅读用户最近的事件卡，找出**跨场景重复出现**的行为模式。"
+                "只输出 JSON，不要解释。\n"
+                '格式：{"candidates": [{"name": "弱点标签（12字内）", '
+                '"reason": "依据（40字内，引用具体事件）", "confidence": 1-5}]}\n'
+                "最多 3 条。没有足够证据就返回空数组。不要为了凑数而编造。"
+            ),
+        ),
+        ChatMessage(role="user", content=f"【最近事件卡】\n{cards_text}{weak_hint}"),
+    ]
+
+
+def build_loop_dialog_messages(
+    weakness_name: str, step: str, collected: dict[str, str]
+) -> list[ChatMessage]:
+    """对话式回环启动。
+
+    方案 3.3 把流程写死了四步，这里让模型基于已收集信息生成下一句追问，
+    但问题主旨必须与规范一致。
+    """
+    guide = {
+        "scene": "先请用户描述当时发生了什么。",
+        "signal": "追问当时的身体感觉或情绪信号。",
+        "plan": "追问下次遇到类似情况想怎么做。",
+        "confirm": "把用户说的预案复述一遍，问是否现在启用。",
+    }
+    collected_text = "\n".join(f"- {k}：{v}" for k, v in collected.items() if v) or "（暂无）"
+
+    return [
+        ChatMessage(
+            role="system",
+            content=(
+                "你是「对镜」的回环引导者。回环 = 弱点的一条 SOP，"
+                "由「触发场景 + 身体信号 + 应对预案」三段组成。\n"
+                "你一次只问一个问题，语气平实，不说教，不评价用户。\n"
+                "只输出问题本身，不要加任何前后缀、不要编号、不要引号。"
+            ),
+        ),
+        ChatMessage(
+            role="user",
+            content=(
+                f"【当前弱点】{weakness_name}\n"
+                f"【当前步骤】{step}（{guide.get(step, '')}）\n"
+                f"【已收集】\n{collected_text}\n\n"
+                "请输出这一轮要说的一句话。"
+            ),
+        ),
+    ]
+
+
+def build_alternative_action_messages(
+    trigger_scene: str, action_plan: str, note: str
+) -> list[ChatMessage]:
+    """破功后给替代动作（方案 3.3）。"""
+    return [
+        ChatMessage(
+            role="system",
+            content=(
+                "用户的一次演练破功了。给一个比原预案更容易执行的具体替代动作。"
+                "要求：只输出这一句话，不超过 40 字，必须是一个可以当场做的动作，"
+                "不要安慰，不要说教，不要重复原预案。"
+            ),
+        ),
+        ChatMessage(
+            role="user",
+            content=(
+                f"【触发场景】{trigger_scene}\n"
+                f"【原预案】{action_plan}\n"
+                f"【这次发生了什么】{note or '（用户未填写）'}"
+            ),
+        ),
+    ]
+
+
+def build_event_card_analysis_messages(
+    content: str, loops: Sequence, weaknesses: Sequence = ()
+) -> list[ChatMessage]:
+    """事件卡判定：极简模式下由 AI 判断关联哪个回环、结果是什么。
+
+    方案 3.4：只写一句时，AI 自动判断关联和结果；不确定时标记「待确认」。
+    """
+    loop_lines = []
+    for loop in sorted(loops, key=lambda lp: lp.id):
+        weakness_name = ""
+        for card in weaknesses:
+            if card.id == loop.weakness_id:
+                weakness_name = card.name
+                break
+        loop_lines.append(
+            f"- #{loop.id} 场景：{loop.trigger_scene}"
+            + (f"｜对应弱点：{weakness_name}" if weakness_name else "")
+            + (f"｜预案：{loop.action_plan}" if loop.action_plan else "")
+        )
+    loop_block = "\n".join(loop_lines) if loop_lines else "（用户当前没有启用中的回环）"
+
+    return [
+        ChatMessage(
+            role="system",
+            content=(
+                "你在帮用户给一条实战记录归档。判断两件事：\n"
+                "1. 这条记录最接近哪个回环（如果都不接近，给 null）\n"
+                "2. 用户当时是撑住了（hold）、破功了（break）、还是那个场景根本没出现"
+                "（not_triggered）；判断不了就给 unsure\n"
+                "只输出 JSON，不要解释。\n"
+                '格式：{"loop_id": 数字或null, "result": "hold|break|not_triggered|unsure", '
+                '"reason": "20字内依据"}\n'
+                "拿不准就老实给 unsure 和 null，不要猜。"
+            ),
+        ),
+        ChatMessage(
+            role="user",
+            content=f"【用户记录】{content}\n\n【可选回环】\n{loop_block}",
+        ),
+    ]
+
+
+def build_principle_messages(loop_desc: str, logs_text: str) -> list[ChatMessage]:
+    """撑住率达标后提炼原则候选。"""
+    return [
+        ChatMessage(
+            role="system",
+            content=(
+                "用户在某个回环上连续撑住了。从他实际做对的动作里提炼一条可复用的原则。"
+                "只输出 JSON，不要解释。\n"
+                '格式：{"content": "原则（25字内，祈使句，可直接执行）"}\n'
+                "要求：必须是用户已经验证过的做法，不要发明新方法。"
+            ),
+        ),
+        ChatMessage(role="user", content=f"【回环】\n{loop_desc}\n\n【演练记录】\n{logs_text}"),
+    ]
+
+
+# ─────────────────────────────────────────────────────────────
+# 内部小工具
+# ─────────────────────────────────────────────────────────────
+
+
+def _level_cn(level: str) -> str:
+    return {
+        "novice": "新手（温和，多给台阶）",
+        "intermediate": "中级（正常对抗）",
+        "advanced": "高级（犀利，直击薄弱处）",
+    }.get(level, "新手（温和，多给台阶）")
+
+
+def _weakness_status_cn(status: str) -> str:
+    return {
+        "ai_candidate": "AI 观察候选",
+        "observing": "观察中",
+        "improving": "改善中",
+        "archived": "暂存",
+    }.get(status, status)

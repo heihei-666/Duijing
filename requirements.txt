@@ -1,0 +1,17 @@
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+sqlalchemy==2.0.36
+aiosqlite==0.20.0
+pydantic==2.10.4
+PyJWT==2.10.1
+bcrypt==4.2.1
+python-multipart==0.0.20
+sse-starlette==2.2.1
+APScheduler==3.11.0
+httpx==0.28.1
+python-dotenv==1.0.1
+# 时区数据库兜底。
+# Alpine/slim 镜像与部分容器没有 /usr/share/zoneinfo，
+# 缺了它 zoneinfo.ZoneInfo("Asia/Shanghai") 会直接抛异常导致服务起不来。
+# 在正常的 Ubuntu 上系统自带 tzdata，这一项不会被用到，只是兜底。
+tzdata==2024.2
