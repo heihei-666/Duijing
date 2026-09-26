@@ -401,3 +401,148 @@ class TestAccountData:
     def test_account_endpoints_require_login(self, client):
         assert client.get("/api/account/export").status_code == 401
         assert client.post("/api/account/deletion").status_code == 401
+
+
+class TestReminderDispatchSuccess:
+    """派发的成功路径。
+
+    真实推送需要浏览器环境，这里把发送函数替换掉，
+    验证「到点 → 取订阅 → 发送 → 标记 sent」这条链路本身是通的。
+    否则一旦线上没人收到提醒，我们连问题出在哪一环都不知道。
+    """
+
+    def _seed_due(self, actor, room_id):
+        import asyncio
+
+        from sqlalchemy import select
+
+        from app.db import session_scope
+        from app.models import DebateReminder, User
+        from app.utils import now_utc
+
+        async def _run():
+            async with session_scope() as session:
+                user = await session.scalar(select(User).where(User.username == actor.username))
+                session.add(
+                    DebateReminder(
+                        user_id=user.id,
+                        room_id=room_id,
+                        remind_at=now_utc() - timedelta(seconds=10),
+                        status="pending",
+                    )
+                )
+
+        asyncio.run(_run())
+
+    def _subscribe(self, actor) -> str:
+        endpoint = "https://fcm.googleapis.com/fcm/send/dispatch-ok"
+        actor.post(
+            "/api/push/subscribe",
+            json={"endpoint": endpoint, "keys": {"p256dh": "key", "auth": "auth"}},
+        )
+        return endpoint
+
+    def test_due_reminder_is_sent_and_marked(self, client, unique_name, monkeypatch):
+        import asyncio
+
+        from sqlalchemy import select
+
+        from app.db import session_scope
+        from app.models import DebateReminder
+        from app.services import push as push_module
+
+        actor = register(client, unique_name("dok"))
+        room_id = actor.post("/api/debates", json={"topic": "t", "stance": "s"}).json()["room"]["id"]
+        self._subscribe(actor)
+        self._seed_due(actor, room_id)
+
+        sent_payloads: list[dict] = []
+
+        def fake_send_one(subscription, payload, private_pem):
+            sent_payloads.append(payload)
+
+        monkeypatch.setattr(push_module, "_send_one", fake_send_one)
+
+        async def _dispatch():
+            async with session_scope() as session:
+                return await push_module.dispatch_due_reminders(session)
+
+        stats = asyncio.run(_dispatch())
+        assert stats["sent"] >= 1, f"应当发出至少一条，实际 {stats}"
+        assert sent_payloads, "发送函数没有被调用"
+        assert sent_payloads[0]["url"] == f"/debates/{room_id}"
+        assert "tag" in sent_payloads[0]
+
+        async def _check():
+            async with session_scope() as session:
+                rows = await session.execute(
+                    select(DebateReminder).where(
+                        DebateReminder.room_id == room_id,
+                        DebateReminder.status == "sent",
+                    )
+                )
+                item = rows.scalars().first()
+                return item.sent_at if item else None
+
+        assert asyncio.run(_check()) is not None, "发送后必须落到 sent 状态，否则会重复推送"
+
+    def test_dispatch_is_idempotent(self, client, unique_name, monkeypatch):
+        """再跑一次不应重发——否则定时任务重叠执行会重复打扰用户。"""
+        import asyncio
+
+        from app.db import session_scope
+        from app.services import push as push_module
+
+        actor = register(client, unique_name("didem"))
+        room_id = actor.post("/api/debates", json={"topic": "t2", "stance": "s"}).json()["room"]["id"]
+        self._subscribe(actor)
+        self._seed_due(actor, room_id)
+
+        calls: list[dict] = []
+        monkeypatch.setattr(
+            push_module, "_send_one", lambda sub, payload, pem: calls.append(payload)
+        )
+
+        async def _dispatch():
+            async with session_scope() as session:
+                return await push_module.dispatch_due_reminders(session)
+
+        first = asyncio.run(_dispatch())
+        before = len(calls)
+        second = asyncio.run(_dispatch())
+
+        assert first["sent"] >= 1
+        assert second["sent"] == 0, "第二次不应重发"
+        assert len(calls) == before
+
+    def test_gone_subscription_is_disabled(self, client, unique_name, monkeypatch):
+        """推送服务返回 410 说明订阅已失效（用户卸载了 PWA），
+        必须标记停用，否则会一直被拒绝。"""
+        import asyncio
+
+        from pywebpush import WebPushException
+
+        from app.db import session_scope
+        from app.services import push as push_module
+
+        actor = register(client, unique_name("gone"))
+        room_id = actor.post("/api/debates", json={"topic": "t3", "stance": "s"}).json()["room"]["id"]
+        self._subscribe(actor)
+        self._seed_due(actor, room_id)
+
+        class FakeResponse:
+            status_code = 410
+
+        def fake_send_one(subscription, payload, private_pem):
+            raise WebPushException("Gone", response=FakeResponse())
+
+        monkeypatch.setattr(push_module, "_send_one", fake_send_one)
+
+        async def _dispatch():
+            async with session_scope() as session:
+                return await push_module.dispatch_due_reminders(session)
+
+        asyncio.run(_dispatch())
+
+        # 订阅被标记失效后，device_count 应归零
+        assert actor.get("/api/push/status").json()["device_count"] == 0
