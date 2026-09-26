@@ -74,6 +74,11 @@ export default function LoginPage() {
         <Button type="submit" size="lg" fullWidth loading={submitting}>
           登录
         </Button>
+
+        {/* 故意不做成链接：这里没有自助重置入口，做成链接只会让人点进死路 */}
+        <p className="text-center text-xs leading-relaxed text-tertiary">
+          忘记密码？请联系开发者重置。
+        </p>
       </form>
     </AuthLayout>
   );

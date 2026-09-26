@@ -101,6 +101,25 @@ def _user_dict(user: User) -> dict:
 # ── 接口 ──────────────────────────────────────────────────────
 
 
+@router.get("/bootstrap")
+async def bootstrap_status(session: AsyncSession = Depends(get_session)):
+    """实例的初始化状态（公开，无需登录）。
+
+    存在的意义：只有**第一个**用户能免邀请码注册，但前端原本硬性要求填写邀请码，
+    于是部署者第一次打开自己的站点时，会看到「需要一个邀请码」——
+    而他手上根本没有邀请码，因为能发邀请码的人还没注册。
+
+    这个端点让注册页能如实告诉第一个人：「你是第一个，直接注册就行」。
+    """
+    count = await _user_count(session)
+    return {
+        "needs_first_user": count == 0,
+        "user_count": count,
+        "open_register": settings.ALLOW_OPEN_REGISTER,
+        "invite_required": count > 0 and not settings.ALLOW_OPEN_REGISTER,
+    }
+
+
 @router.post("/register", status_code=status.HTTP_201_CREATED)
 async def register(
     payload: RegisterPayload,

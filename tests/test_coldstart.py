@@ -546,3 +546,56 @@ class TestReminderDispatchSuccess:
 
         # 订阅被标记失效后，device_count 应归零
         assert actor.get("/api/push/status").json()["device_count"] == 0
+
+
+# ─────────────────────────────────────────────────────────────
+# 第一个用户不该被邀请码拦住
+# ─────────────────────────────────────────────────────────────
+
+
+class TestFirstUserBootstrap:
+    """只有第一个用户能免邀请码注册，但注册页原本硬性要求填邀请码。
+
+    于是部署者第一次打开自己的站点时会看到「需要一个邀请码」——
+    而他手上不可能有邀请码，因为能发码的人还没注册。
+    这是真实发生过的冷启动阻塞。
+    """
+
+    def test_bootstrap_open_when_no_user(self, client, monkeypatch):
+        """实例为空时应告知「需要第一个用户」。"""
+        import app.api.auth as auth_module
+        from sqlalchemy import func, select
+        from app.models import User
+
+        async def fake_count(session):
+            return 0
+
+        # 直接替换计数函数，模拟「库里还没有用户」——
+        # 测试会话共用一个库，真实库里已经有引导管理员了
+        monkeypatch.setattr(auth_module, "_user_count", fake_count)
+
+        resp = client.get("/api/auth/bootstrap")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["needs_first_user"] is True
+        assert body["invite_required"] is False
+
+    def test_bootstrap_requires_invite_once_user_exists(self, client):
+        """已有用户时，新注册必须凭邀请码。"""
+        body = client.get("/api/auth/bootstrap").json()
+        assert body["needs_first_user"] is False
+        assert body["user_count"] >= 1
+        assert body["invite_required"] is True
+
+    def test_bootstrap_is_public(self, client):
+        """未登录也要能问——注册页在登录之前就要用。"""
+        assert client.get("/api/auth/bootstrap").status_code == 200
+
+    def test_existing_user_still_needs_invite(self, client, unique_name):
+        """这个改动不能把邀请制放开：已有实例仍必须凭码注册。"""
+        resp = client.post(
+            "/api/auth/register",
+            json={"username": unique_name("nope"), "password": "TestPass123"},
+        )
+        assert resp.status_code == 400
+        assert "邀请码" in resp.json()["detail"]

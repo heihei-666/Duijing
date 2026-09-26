@@ -11,9 +11,12 @@ interface RoomActionsProps {
   finishing: boolean;
   /** 该用户是发起人才看得到「邀请」「结束并复盘」 */
   showOwnerActions: boolean;
+  /** 是否已经约了提醒（按钮文案用） */
+  hasReminder: boolean;
   onTogglePause: () => void;
   onInvite: () => void;
   onFinish: () => void;
+  onRemind: () => void;
 }
 
 /**
@@ -27,9 +30,11 @@ export function RoomActions({
   inviting,
   finishing,
   showOwnerActions,
+  hasReminder,
   onTogglePause,
   onInvite,
   onFinish,
+  onRemind,
 }: RoomActionsProps) {
   const finished = room.status === 'finished';
   const paused = room.status === 'paused';
@@ -44,6 +49,13 @@ export function RoomActions({
           onClick={onTogglePause}
         >
           {paused ? '继续' : '暂停'}
+        </Button>
+      ) : null}
+
+      {/* 预约提醒：方案 3.9 里唯一的主动触达入口，只在这里出现 */}
+      {!finished ? (
+        <Button variant="outline" disabled={finishing || togglingPause} onClick={onRemind}>
+          {hasReminder ? '已约提醒' : '提醒我'}
         </Button>
       ) : null}
 

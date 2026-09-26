@@ -7,24 +7,30 @@ import { Button } from '@/components/common/Button';
 import { DebateComposer } from '@/features/debate/DebateComposer';
 import { InviteSheet } from '@/features/debate/InviteSheet';
 import { MessageBubble } from '@/features/debate/MessageBubble';
+import { ReminderSheet } from '@/features/debate/ReminderSheet';
 import { ReviewCard } from '@/features/debate/ReviewCard';
 import { RoomActions } from '@/features/debate/RoomActions';
 import { RoomHeader } from '@/features/debate/RoomHeader';
 import {
   DEBATE_MESSAGE_MAX_CHARS,
   abandonDebateRound,
+  cancelDebateReminder,
   countChars,
   dismissDebateObservations,
   finishDebate,
+  getDebateReminder,
   getDebateRoom,
   inviteToDebate,
   pauseDebate,
   resumeDebate,
   sendDebateMessage,
+  setDebateReminder,
   type DebateInviteResult,
+  type DebateReminder,
   type ReviewCardFull,
 } from '@/features/debate/api';
 import { useDebateStream, type RoundDoneInfo } from '@/features/debate/useDebateStream';
+import { usePushNotifications } from '@/features/push/usePushNotifications';
 import { useAuthStore } from '@/store/auth';
 
 /**
@@ -71,6 +77,25 @@ export default function DebateRoomPage() {
   const [inviteError, setInviteError] = useState<string | null>(null);
   const [inviteOpen, setInviteOpen] = useState(false);
   const [reviewError, setReviewError] = useState<string | null>(null);
+
+  /* ---------------------------------------------- 预约提醒（方案 3.9 唯一触达） */
+  const [reminder, setReminder] = useState<DebateReminder | null>(null);
+  const [reminderOpen, setReminderOpen] = useState(false);
+  const [reminderError, setReminderError] = useState<string | null>(null);
+  /** 正在提交的 preset key */
+  const [savingPreset, setSavingPreset] = useState<string | null>(null);
+  const [cancellingReminder, setCancellingReminder] = useState(false);
+  /** POST 返回的 device_count：0 表示约了也收不到，必须如实提示 */
+  const [reminderDeviceCount, setReminderDeviceCount] = useState(0);
+
+  /**
+   * 推送状态按需加载（auto: false）：进房间不该无端多两个请求，
+   * 打开提醒面板时再 refresh()。
+   */
+  const pushNotifications = usePushNotifications({ auto: false });
+  const { refresh: refreshPush, enable: enablePush } = pushNotifications;
+  /** 服务端说的设备数与本机订阅状态取较大者，开启成功后警告要能立刻消失 */
+  const reminderDeviceTotal = Math.max(reminderDeviceCount, pushNotifications.deviceCount);
 
   /** 列表追加消息：按 id 去重（SSE 的 message 事件可能与已有消息重复） */
   const upsertMessage = useCallback((incoming: DebateMessage) => {
@@ -170,6 +195,30 @@ export default function DebateRoomPage() {
       cancelled = true;
     };
   }, [roomId, validRoomId, startStream]);
+
+  /* ------------------------------------------------- 读取已有的预约提醒 */
+  // 独立于上面那次详情加载：提醒读失败不该影响房间本身（SSE / 消息逻辑完全不碰）
+  useEffect(() => {
+    if (!validRoomId) return;
+
+    let cancelled = false;
+    setReminder(null);
+    setReminderError(null);
+    setReminderDeviceCount(0);
+
+    void (async () => {
+      try {
+        const result = await getDebateReminder(roomId);
+        if (!cancelled) setReminder(result.reminder);
+      } catch {
+        // 读不到就当作没有预约；面板里的「提醒我」依然可用
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [roomId, validRoomId]);
 
   /* ------------------------------------------------------------------ 操作 */
 
@@ -295,6 +344,53 @@ export default function DebateRoomPage() {
     startStream(lastUser?.seq);
   }, [messages, startStream]);
 
+  /* ------------------------------------------------------------ 提醒相关操作 */
+
+  const handleOpenReminder = useCallback(() => {
+    setReminderOpen(true);
+    setReminderError(null);
+    // 打开时才拉 presets 与设备数，保证面板里的信息是新的
+    void refreshPush();
+  }, [refreshPush]);
+
+  const handlePickReminder = useCallback(
+    async (preset: string) => {
+      setSavingPreset(preset);
+      setReminderError(null);
+      try {
+        const result = await setDebateReminder(roomId, preset);
+        setReminder(result.reminder);
+        setReminderDeviceCount(result.device_count);
+        // 约上了但收不到时**不关**面板：用户必须看见「还没开启通知」这句
+        if (result.will_notify) setReminderOpen(false);
+      } catch (cause) {
+        setReminderError(cause instanceof Error ? cause.message : '预约失败，请稍后再试');
+      } finally {
+        setSavingPreset(null);
+      }
+    },
+    [roomId],
+  );
+
+  const handleCancelReminder = useCallback(async () => {
+    setCancellingReminder(true);
+    setReminderError(null);
+    try {
+      await cancelDebateReminder(roomId);
+      setReminder(null);
+      setReminderDeviceCount(0);
+      setReminderOpen(false);
+    } catch (cause) {
+      setReminderError(cause instanceof Error ? cause.message : '取消失败，请稍后再试');
+    } finally {
+      setCancellingReminder(false);
+    }
+  }, [roomId]);
+
+  const handleEnablePush = useCallback(() => {
+    void enablePush();
+  }, [enablePush]);
+
   /* -------------------------------------------------------------- 渲染分支 */
 
   if (loading) {
@@ -330,10 +426,42 @@ export default function DebateRoomPage() {
             inviting={inviting}
             finishing={finishing}
             showOwnerActions={room.is_owner}
+            hasReminder={reminder !== null}
             onTogglePause={() => void handleTogglePause()}
             onInvite={() => void handleInvite()}
             onFinish={() => void handleFinish()}
+            onRemind={handleOpenReminder}
           />
+
+          {/*
+            已预约状态如实摆在这里：收得到就说收得到，收不到直说收不到，
+            并给一条能走通的路（去设置里开启通知）。
+          */}
+          {reminder ? (
+            <button
+              type="button"
+              onClick={() =>
+                reminderDeviceTotal > 0
+                  ? handleOpenReminder()
+                  : navigate('/assets?tab=settings')
+              }
+              className="mt-3 flex min-h-[44px] w-full items-center justify-between gap-3 rounded-xl border border-light bg-surface px-3 text-left"
+            >
+              <span
+                className={
+                  reminderDeviceTotal > 0
+                    ? 'text-xs leading-relaxed text-secondary'
+                    : 'text-xs leading-relaxed text-warning'
+                }
+              >
+                已约 {reminder.remind_at_local} 提醒
+                {reminderDeviceTotal > 0 ? '，到点通知你。' : '，但还没开启通知，到点收不到。'}
+              </span>
+              <span className="shrink-0 text-xs text-brand">
+                {reminderDeviceTotal > 0 ? '修改' : '去开启'}
+              </span>
+            </button>
+          ) : null}
 
           {/* 读屏提示：只播报「正在回复」这个状态，不逐个 token 播报 */}
           <p className="sr-only" role="status" aria-live="polite">
@@ -408,6 +536,33 @@ export default function DebateRoomPage() {
         loading={inviting}
         error={inviteError}
         onClose={() => setInviteOpen(false)}
+      />
+
+      <ReminderSheet
+        open={reminderOpen}
+        presets={pushNotifications.presets}
+        loading={pushNotifications.loading}
+        reminder={reminder}
+        savingPreset={savingPreset}
+        cancelling={cancellingReminder}
+        error={reminderError}
+        deviceCount={reminderDeviceTotal}
+        push={{
+          supported: pushNotifications.environment.supported,
+          hint: pushNotifications.environment.hint,
+          subscribed: pushNotifications.subscribed,
+          enabling: pushNotifications.busy === 'enable',
+          error: pushNotifications.error,
+          notice: pushNotifications.notice,
+          onEnable: handleEnablePush,
+          onOpenSettings: () => {
+            setReminderOpen(false);
+            navigate('/assets?tab=settings');
+          },
+        }}
+        onPick={(preset) => void handlePickReminder(preset)}
+        onCancelReminder={() => void handleCancelReminder()}
+        onClose={() => setReminderOpen(false)}
       />
     </div>
   );

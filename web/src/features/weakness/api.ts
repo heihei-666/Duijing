@@ -39,7 +39,11 @@ export interface WeaknessCardData {
   /** 近 30 天触发次数（撑住 + 破功） */
   trigger_count_30d: number;
   hold_count_30d: number;
-  hold_rate_30d: number;
+  /** null = 还没有触发记录（不是 0%），见 docs/API.md 15.1 */
+  hold_rate_30d: number | null;
+  hold_rate_7d?: number | null;
+  hold_rate_prev_7d?: number | null;
+  trend_delta?: number | null;
   /** 预案数（回环数） */
   plan_count: number;
   /** 累计演练次数（全时段） */
@@ -77,7 +81,7 @@ export interface LoopData {
   linked_principles: LinkedPrincipleData[];
   trigger_count_30d: number;
   hold_count_30d: number;
-  hold_rate_30d: number;
+  hold_rate_30d: number | null;
   created_at: string;
   updated_at: string;
 }
@@ -173,7 +177,7 @@ export interface LoopUpdatePayload {
 
 export interface LoopLogCreateResponse {
   log: LoopLogData;
-  hold_rate_30d: number;
+  hold_rate_30d: number | null;
   trigger_count_30d: number;
   loop_status: LoopStatus;
   /** 撑住率 ≥ 80% 且触发 ≥ 5：仅提示，绝不自动降级 */
@@ -187,7 +191,7 @@ export interface LoopLogCreateResponse {
 
 export interface LoopLogListData {
   logs: LoopLogData[];
-  hold_rate_30d: number;
+  hold_rate_30d: number | null;
   trigger_count_30d: number;
   hold_count_30d: number;
 }

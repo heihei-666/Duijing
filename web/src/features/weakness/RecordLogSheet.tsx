@@ -4,6 +4,7 @@ import type { LoopLogResult } from '@/api/types';
 import { Button } from '@/components/common/Button';
 import { Sheet } from '@/components/common/Sheet';
 import { cn } from '@/lib/cn';
+import { ratePercent, rateText } from '@/lib/rateColor';
 import {
   addLoopLog,
   RESULT_LABELS,
@@ -132,9 +133,14 @@ export function RecordLogSheet({
                 {RESULT_LABELS[response.log.result]}
               </span>
               <span className="ml-3 text-[13px] text-tertiary">
-                近 30 天撑住率 {response.hold_rate_30d}%
+                近 30 天撑住率 {rateText(response.hold_rate_30d)}
               </span>
             </p>
+
+            {/* 记的是「未触发」时撑住率仍是 --（不进分母），这里说一句，避免被当成 0% */}
+            {ratePercent(response.hold_rate_30d) === null ? (
+              <p className="text-xs text-tertiary">这次没有触发，撑住率还是 --，先攒着。</p>
+            ) : null}
 
             {response.alternative_action ? (
               <div className="rounded-xl bg-info-light px-4 py-3">

@@ -165,3 +165,60 @@ export function inviteToDebate(id: number): Promise<DebateInviteResult> {
 export function debateStreamUrl(id: number, afterSeq?: number): string {
   return debateApi.streamUrl(id, afterSeq);
 }
+
+/* -------------------------------------------------------------- 预约提醒 */
+
+/**
+ * 预约辩论提醒（方案 3.9：产品里唯一的主动触达通道）。
+ * 后端：app/api/debates.py 的 `GET/POST/DELETE /api/debates/{id}/reminder`
+ * + app/services/push.py 的 REMINDER_PRESETS。
+ *
+ * `client.ts` 里没有这三个方法，本模块继续用 `apiRequest` 补齐。
+ */
+
+export interface DebateReminder {
+  id: number;
+  room_id: number;
+  /** ISO 8601 UTC */
+  remind_at: string;
+  /** 服务端按本地时区格式化好的 "MM-DD HH:mm"，直接展示，前端不再自己换算 */
+  remind_at_local: string;
+  /** pending / sent / failed / cancelled */
+  status: string;
+  note: string;
+}
+
+export interface DebateReminderResult {
+  reminder: DebateReminder;
+  /** 该账号当前登记的推送设备数 */
+  device_count: number;
+  /**
+   * false = 约是约上了，但一台设备都没登记，到点**收不到**。
+   * 前端必须据此明确提示，不能让用户以为约好了。
+   */
+  will_notify: boolean;
+}
+
+/** 进入房间时读当前预约（没有则为 null） */
+export function getDebateReminder(id: number): Promise<{ reminder: DebateReminder | null }> {
+  return apiRequest<{ reminder: DebateReminder | null }>(`/debates/${id}/reminder`);
+}
+
+/** 用预设时间预约提醒；preset 取值来自 `GET /api/push/config` 的 presets */
+export function setDebateReminder(
+  id: number,
+  preset: string,
+  note = '',
+): Promise<DebateReminderResult> {
+  return apiRequest<DebateReminderResult>(`/debates/${id}/reminder`, {
+    method: 'POST',
+    body: { preset, note },
+  });
+}
+
+/** 取消预约 */
+export function cancelDebateReminder(id: number): Promise<{ ok: boolean; cancelled: boolean }> {
+  return apiRequest<{ ok: boolean; cancelled: boolean }>(`/debates/${id}/reminder`, {
+    method: 'DELETE',
+  });
+}

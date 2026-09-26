@@ -91,7 +91,20 @@ export interface WeaknessCard {
   source_id: number | null;
   trigger_count_30d: number;
   hold_count_30d: number;
-  hold_rate_30d: number;
+  /**
+   * 撑住率。**null 表示还没有触发记录，不是 0%**。
+   *
+   * 0% 的含义是「每次都破功」，两者绝不能渲染成同一个东西——
+   * 刚建好回环、一次都没练过的用户看到 0% 会以为自己一直在失败。
+   * 配合 trigger_count_30d 判断（为 0 时说明无数据）。
+   */
+  hold_rate_30d: number | null;
+  /** 本周撑住率；null = 本周无触发数据 */
+  hold_rate_7d?: number | null;
+  /** 上周撑住率；null = 上周无触发数据 */
+  hold_rate_prev_7d?: number | null;
+  /** 本周 - 上周；任一周为 null 时本字段为 null，此时不显示趋势 */
+  trend_delta?: number | null;
   loop_count: number;
   plan_count: number;
   days_since_created: number;
@@ -123,7 +136,7 @@ export interface Loop {
   linked_principles: LinkedPrinciple[];
   trigger_count_30d: number;
   hold_count_30d: number;
-  hold_rate_30d: number;
+  hold_rate_30d: number | null;
   created_at: string;
   updated_at: string;
 }
@@ -301,7 +314,7 @@ export interface TodayLoop {
   loop_id: number;
   title: string;
   weakness_id: number;
-  hold_rate_30d: number;
+  hold_rate_30d: number | null;
   trigger_count_30d: number;
 }
 
@@ -345,10 +358,13 @@ export interface DailyState {
 /* ------------------------------------------------------------ 辩论房 */
 
 export interface DebateCreatePayload {
-  /** 可空：传 source_* 时由 AI 生成 */
+  /** 可空：不传 topic 时必须传 scene，由 AI 生成辩题 */
   topic?: string;
   stance: string;
-  source_type: DebateSourceType;
+  /** 用户描述的场景，由 AI 转成辩题 */
+  scene?: string;
+  /** 可省略，后端默认 manual */
+  source_type?: DebateSourceType;
   /** weakness_id 或 event_card_id */
   source_id?: number | null;
   /** 关联回环时，AI 会制造触发场景（不告知用户） */

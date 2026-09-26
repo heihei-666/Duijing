@@ -33,6 +33,7 @@ export default defineConfig({
       workbox: {
         mode: workboxMode,
         globPatterns: ['**/*.{js,css,html,svg,png,ico,webmanifest,woff2}'],
+        importScripts: ['push-handler.js'],
         navigateFallback: '/index.html',
         // API 与 SSE 永远走网络，不能被 SW 兜底成 index.html
         navigateFallbackDenylist: [/^\/api\//],

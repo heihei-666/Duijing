@@ -7,6 +7,8 @@ import { Button } from '@/components/common/Button';
 import { ActionSection } from '@/features/status-bar/ActionSection';
 import { EnergySheet } from '@/features/status-bar/EnergySheet';
 import { ObservationSection } from '@/features/status-bar/ObservationSection';
+import { QuickDebateSheet } from '@/features/status-bar/QuickDebateSheet';
+import { QuickEventCardSheet } from '@/features/status-bar/QuickEventCardSheet';
 import { StatusHeader } from '@/features/status-bar/StatusHeader';
 import { TodayLoopsSection } from '@/features/status-bar/TodayLoopsSection';
 
@@ -14,6 +16,11 @@ import { TodayLoopsSection } from '@/features/status-bar/TodayLoopsSection';
  * 首页 = 状态栏（方案 3.7 / API GET /api/status-bar）。
  * 四块：日期+精力+连续天数 / 今天练什么 / AI 观察 / 两个入口。
  * 每块各自收形，空状态不喧哗。
+ *
+ * Cold start 改造：新用户注册后四块全是空的，光靠克制文案他不知道点哪。
+ * 所以两个空状态各给一个「点了一定有结果」的入口，且都不跳页、不开新页面：
+ *   今天练什么 → QuickDebateSheet（随机辩题 + 两个立场 → 直接进辩论房）
+ *   AI 观察   → QuickEventCardSheet（只问一句话 → POST /api/event-cards）
  */
 export default function HomePage() {
   const navigate = useNavigate();
@@ -28,6 +35,10 @@ export default function HomePage() {
 
   const [pendingObservationId, setPendingObservationId] = useState<number | null>(null);
   const [observationError, setObservationError] = useState<string | null>(null);
+
+  /** 即兴辩论 / 极简事件卡：两个空状态各自唤起一个 Sheet，都不跳页 */
+  const [quickDebateOpen, setQuickDebateOpen] = useState(false);
+  const [quickRecordOpen, setQuickRecordOpen] = useState(false);
 
   /** silent = 后台刷新，不切成骨架屏（处理 AI 观察后用） */
   const load = useCallback(async (silent = false) => {
@@ -118,7 +129,11 @@ export default function HomePage() {
         }}
       />
 
-      <TodayLoopsSection loops={data.today_loops} onSelect={handleSelectLoop} />
+      <TodayLoopsSection
+        loops={data.today_loops}
+        onSelect={handleSelectLoop}
+        onQuickDebate={() => setQuickDebateOpen(true)}
+      />
 
       <ObservationSection
         observations={data.observations}
@@ -126,15 +141,27 @@ export default function HomePage() {
         error={observationError}
         onAccept={(id) => void handleObservation(id, 'accept')}
         onIgnore={(id) => void handleObservation(id, 'ignore')}
+        onQuickRecord={() => setQuickRecordOpen(true)}
       />
 
       <ActionSection
-        // TODO(辩论)：下一阶段直接进入新建辩论流程（POST /api/debates）
+        // TODO(辩论)：底部这个入口仍走辩论 Tab（那边有「开一场新的辩论」表单）。
+        // 首页空状态已改为直达 QuickDebateSheet；等辩论模块的同事确认后，
+        // 这里也可以统一接到 QuickDebateSheet，省掉新用户的一次选择。
         onDebate={() => navigate('/debates')}
         // TODO(事件卡)：方案 3.4 的「记一笔」快速记录，落到资产页的事件卡入口
         // 带 ?tab=events 直接落到「事件卡」分区；
         // 不带的话用户还得在资产页再点一次分段控件，多一步无谓操作
         onRecord={() => navigate('/assets?tab=events')}
+      />
+
+      <QuickDebateSheet open={quickDebateOpen} onClose={() => setQuickDebateOpen(false)} />
+
+      <QuickEventCardSheet
+        open={quickRecordOpen}
+        onClose={() => setQuickRecordOpen(false)}
+        // 记完静默刷新：可能已经自动关联回环、写了日志，AI 观察块也可能变了
+        onSaved={() => void load(true)}
       />
 
       <EnergySheet
