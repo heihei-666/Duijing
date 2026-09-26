@@ -29,8 +29,21 @@ die()  { printf '\033[1;31m[✗]\033[0m %s\n' "$*" >&2; exit 1; }
 # 0. 前置检查 —— 这两条不满足，certbot 必然失败，提前说清楚
 # ─────────────────────────────────────────────────────────────
 log "检查域名解析"
-RESOLVED="$(getent hosts "$DOMAIN" | awk '{print $1}' | head -1 || true)"
-WWW_RESOLVED="$(getent hosts "www.$DOMAIN" | awk '{print $1}' | head -1 || true)"
+
+# 用公共 DNS 查询，而不是服务器本地解析器。
+# 理由：本地解析器可能缓存了旧的 NXDOMAIN（新域名很常见），
+# 也可能因为服务器自身的 resolv.conf 配置而查不到，
+# 但 ACME 服务器走的是公网解析——判断标准必须和它一致。
+resolve_a() {
+  if command -v dig >/dev/null 2>&1; then
+    dig +short A "$1" @223.5.5.5 2>/dev/null | head -1
+  else
+    getent hosts "$1" | awk '{print $1}' | head -1
+  fi
+}
+
+RESOLVED="$(resolve_a "$DOMAIN")"
+WWW_RESOLVED="$(resolve_a "www.$DOMAIN")"
 PUBLIC_IP="$(curl -s --max-time 8 https://api.ipify.org || true)"
 if [ -z "$RESOLVED" ]; then
   die "$DOMAIN 解析不到任何 IP。请先在 DNS 添加 A 记录指向 $PUBLIC_IP"
