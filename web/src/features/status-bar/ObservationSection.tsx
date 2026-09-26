@@ -1,4 +1,5 @@
 import { Button } from '@/components/common/Button';
+import { cn } from '@/lib/cn';
 import type { StatusBarObservation } from '@/api/types';
 
 interface ObservationSectionProps {
@@ -13,6 +14,8 @@ interface ObservationSectionProps {
    * 不传就只显示说明文案。
    */
   onQuickRecord?: () => void;
+  /** 全新用户状态：与「今天练什么」一起向下延伸填满页面 */
+  spacious?: boolean;
 }
 
 /**
@@ -30,18 +33,24 @@ export function ObservationSection({
   onAccept,
   onIgnore,
   onQuickRecord,
+  spacious = false,
 }: ObservationSectionProps) {
   return (
-    <section className="rounded-2xl border border-sticky-ai bg-sticky-ai px-4 py-4">
+    <section
+      className={cn(
+        'rounded-2xl border border-sticky-ai bg-sticky-ai px-4',
+        spacious ? 'py-8' : 'py-4',
+      )}
+    >
       <h2 className="text-xs text-sticky-ai">AI 观察</h2>
 
       {observations.length === 0 ? (
-        <div className="pt-2 text-center">
-          <p className="text-[14px] leading-relaxed text-primary">
+        <div className={cn('text-center', spacious ? 'pt-4' : 'pt-2')}>
+          <p className="text-[15px] leading-relaxed text-primary">
             记录一个你今天不爽的瞬间，AI 帮你看看盲区。
           </p>
           {onQuickRecord ? (
-            <Button variant="outline" className="mt-3" onClick={onQuickRecord}>
+            <Button variant="outline" size="lg" className={spacious ? 'mt-5' : 'mt-3'} onClick={onQuickRecord}>
               记一笔
             </Button>
           ) : (

@@ -116,6 +116,12 @@ export default function HomePage() {
     );
   }
 
+  /**
+   * 全新用户：两张卡片都空，且从未留下任何痕迹（由服务端判定）。
+   * 这种情况下底部按钮与卡片内的行动重复，且会稀释焦点，所以隐藏。
+   */
+  const isFreshStart = data.is_fresh_start === true;
+
   return (
     <div className="space-y-4">
       <StatusHeader
@@ -133,6 +139,7 @@ export default function HomePage() {
         loops={data.today_loops}
         onSelect={handleSelectLoop}
         onQuickDebate={() => setQuickDebateOpen(true)}
+        spacious={isFreshStart}
       />
 
       <ObservationSection
@@ -142,18 +149,28 @@ export default function HomePage() {
         onAccept={(id) => void handleObservation(id, 'accept')}
         onIgnore={(id) => void handleObservation(id, 'ignore')}
         onQuickRecord={() => setQuickRecordOpen(true)}
+        spacious={isFreshStart}
       />
 
-      <ActionSection
-        // TODO(辩论)：底部这个入口仍走辩论 Tab（那边有「开一场新的辩论」表单）。
-        // 首页空状态已改为直达 QuickDebateSheet；等辩论模块的同事确认后，
-        // 这里也可以统一接到 QuickDebateSheet，省掉新用户的一次选择。
-        onDebate={() => navigate('/debates')}
-        // TODO(事件卡)：方案 3.4 的「记一笔」快速记录，落到资产页的事件卡入口
-        // 带 ?tab=events 直接落到「事件卡」分区；
-        // 不带的话用户还得在资产页再点一次分段控件，多一步无谓操作
-        onRecord={() => navigate('/assets?tab=events')}
-      />
+      {/*
+        全新用户：底部两组全局快捷按钮与卡片里的行动重复
+        （「和 AI 辩一轮」≈「开始」，「+ 记一笔」≈「记一笔」），
+        同屏两个主色按钮会稀释「一个明确的行动」。
+        所以这个阶段把它们藏起来，只留卡片里的两个入口；
+        两张卡片也已经向下延伸填满原本的空间，不会显得头重脚轻。
+
+        一旦用户留下任何痕迹就恢复显示——包括「记了几笔事件卡」这种情况：
+        那种用户的两张卡片仍然是空的（事件卡要等夜间扫描才会变成观察），
+        但他显然已经开始用了，不该再按全新用户对待。
+      */}
+      {isFreshStart ? (
+        <p className="pt-1 text-center text-[11px] text-disabled">这是你的第一站</p>
+      ) : (
+        <ActionSection
+          onDebate={() => navigate('/debates')}
+          onRecord={() => navigate('/assets?tab=events')}
+        />
+      )}
 
       <QuickDebateSheet open={quickDebateOpen} onClose={() => setQuickDebateOpen(false)} />
 

@@ -599,3 +599,71 @@ class TestFirstUserBootstrap:
         )
         assert resp.status_code == 400
         assert "邀请码" in resp.json()["detail"]
+
+
+# ─────────────────────────────────────────────────────────────
+# is_fresh_start：首页要不要显示底部全局快捷按钮
+# ─────────────────────────────────────────────────────────────
+
+
+class TestFreshStart:
+    """底部两组快捷按钮与卡片内的行动重复（「和 AI 辩一轮」≈「开始」，
+    「+ 记一笔」≈「记一笔」），同屏两个主色按钮会稀释焦点。
+    所以全新用户阶段隐藏它们，只留卡片里的两个明确入口。
+
+    难点在于判定：不能只看「两张卡片是否为空」——
+    记录一张事件卡既不建回环、也不立即产生 AI 观察（它先进队列等夜间扫描），
+    所以「记了几笔」的用户在首页上仍然像全新的。那显然不对。
+    """
+
+    def test_brand_new_user_is_fresh(self, client, unique_name):
+        actor = register(client, unique_name("fresh1"))
+        bar = actor.get("/api/status-bar").json()
+        assert bar["is_fresh_start"] is True
+        assert bar["today_loops"] == []
+        assert bar["observations"] == []
+
+    def test_creating_a_loop_ends_fresh_state(self, client, unique_name):
+        actor = register(client, unique_name("fresh2"))
+        weakness = make_weakness(actor)          # 建弱点本身就算留下痕迹
+        assert actor.get("/api/status-bar").json()["is_fresh_start"] is False
+
+        make_loop(actor, weakness["id"])
+        bar = actor.get("/api/status-bar").json()
+        assert bar["is_fresh_start"] is False
+        assert len(bar["today_loops"]) == 1
+
+    def test_recording_an_event_card_ends_fresh_state(self, client, unique_name):
+        """这是判定逻辑的关键用例。
+
+        事件卡不会让任何一张卡片有数据（不建回环、不立即产生观察），
+        所以如果只按「两张卡片是否为空」判定，记了十笔的用户
+        仍然会看到「这是你的第一站」—— 而他明明已经在用了。
+        """
+        actor = register(client, unique_name("fresh3"))
+        assert actor.get("/api/status-bar").json()["is_fresh_start"] is True
+
+        actor.post("/api/event-cards", json={"content": "开会时被同事打断"})
+
+        bar = actor.get("/api/status-bar").json()
+        # 两张卡片依然是空的……
+        assert bar["today_loops"] == []
+        assert bar["observations"] == []
+        # ……但已经不该按全新用户对待了
+        assert bar["is_fresh_start"] is False
+
+    def test_starting_a_debate_ends_fresh_state(self, client, unique_name):
+        actor = register(client, unique_name("fresh4"))
+        actor.post("/api/debates", json={"topic": "该不该当场反驳", "stance": "该"})
+        assert actor.get("/api/status-bar").json()["is_fresh_start"] is False
+
+    def test_fresh_state_is_per_user(self, client, unique_name):
+        """一个用户开始使用，不该影响另一个用户。"""
+        alice = register(client, unique_name("fresha"))
+        alice.post("/api/event-cards", json={"content": "alice 的记录"})
+
+        code = alice.get("/api/auth/invite").json()["code"]
+        bob = register(client, unique_name("freshb"), invite_code=code)
+
+        assert alice.get("/api/status-bar").json()["is_fresh_start"] is False
+        assert bob.get("/api/status-bar").json()["is_fresh_start"] is True

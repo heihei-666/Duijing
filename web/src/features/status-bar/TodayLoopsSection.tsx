@@ -2,6 +2,7 @@ import { Button } from '@/components/common/Button';
 import { ChevronRightIcon } from '@/components/icons';
 import { RateBar } from '@/features/status-bar/RateBar';
 import { rateColor, rateHint, ratePercent, rateText } from '@/lib/rateColor';
+import { cn } from '@/lib/cn';
 import type { TodayLoop } from '@/api/types';
 
 interface TodayLoopsSectionProps {
@@ -12,6 +13,11 @@ interface TodayLoopsSectionProps {
    * 不传就只显示说明文案，留给以后复用。
    */
   onQuickDebate?: () => void;
+  /**
+   * 全新用户状态：底部按钮被隐藏，卡片要向下延伸填满原本的空间，
+   * 否则整页会显得头重脚轻。
+   */
+  spacious?: boolean;
 }
 
 /**
@@ -21,19 +27,26 @@ interface TodayLoopsSectionProps {
  * 空状态对新用户是第一屏：不写「还没有在练的回环」这种被动告知，
  * 直接给一个能点、且点了一定有结果的入口（即兴辩论 → 一轮之后自然长出回环）。
  */
-export function TodayLoopsSection({ loops, onSelect, onQuickDebate }: TodayLoopsSectionProps) {
+export function TodayLoopsSection({
+  loops,
+  onSelect,
+  onQuickDebate,
+  spacious = false,
+}: TodayLoopsSectionProps) {
   return (
     <section className="rounded-2xl border border-light bg-surface shadow-card">
       <h2 className="px-4 pt-4 text-xs text-secondary">今天练什么</h2>
 
       {loops.length === 0 ? (
-        <div className="px-4 pb-4 pt-1 text-center">
-          <p className="text-[14px] leading-relaxed text-primary">
+        <div className={cn('px-4 text-center', spacious ? 'pb-9 pt-6' : 'pb-4 pt-1')}>
+          <p className="text-[15px] leading-relaxed text-primary">
             想不想来一次 3 分钟的即兴辩论？
           </p>
-          <p className="mt-1 text-xs text-tertiary">不用准备，选个立场就能开始。</p>
+          <p className={cn('text-xs text-tertiary', spacious ? 'mt-2' : 'mt-1')}>
+            不用准备，选个立场就能开始。
+          </p>
           {onQuickDebate ? (
-            <Button className="mt-3" onClick={onQuickDebate}>
+            <Button size="lg" className={spacious ? 'mt-5' : 'mt-3'} onClick={onQuickDebate}>
               开始
             </Button>
           ) : null}

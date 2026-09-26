@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import (
     DailyState,
+    DebateRoom,
     EventCard,
     LoopLog,
     LoopStatus,
@@ -137,6 +138,26 @@ async def get_today_loops(session: AsyncSession, user_id: int) -> list[dict]:
     return items[:TODAY_LOOPS_LIMIT]
 
 
+async def has_any_activity(session: AsyncSession, user_id: int) -> bool:
+    """用户是否**做过任何事**。
+
+    用来决定首页要不要显示底部的全局快捷按钮。
+
+    为什么不能只看两张卡片是否为空：记录一张事件卡既不建回环、
+    也不立即产生 AI 观察（它先进队列，等夜间扫描），所以「记了几笔」
+    的用户在首页上看起来仍像全新的——那显然不对，他已经开始用了。
+
+    这里查的是「有没有留下过任何痕迹」：事件卡、辩论、弱点、演练日志。
+    """
+    for model in (EventCard, DebateRoom, WeaknessCard, LoopLog):
+        found = await session.scalar(
+            select(model.id).where(model.user_id == user_id).limit(1)
+        )
+        if found is not None:
+            return True
+    return False
+
+
 async def build_status_bar(session: AsyncSession, user: User) -> dict:
     """组装首页四块。"""
     today = local_today()
@@ -148,12 +169,17 @@ async def build_status_bar(session: AsyncSession, user: User) -> dict:
     # 首页展示 AI 观察候选时，同时开始 24 小时倒计时
     pending = await observation_service.list_pending(session, user.id, limit=1, mark_seen=True)
 
+    # 首页的「全新用户」判定：两张卡片都空，且从没做过任何事。
+    # 前端据此决定是否隐藏底部的全局快捷按钮，让新用户只面对两个明确行动。
+    fresh = not loops and not pending and not await has_any_activity(session, user.id)
+
     return {
         "date": today.isoformat(),
         "weekday": weekday_cn(today),
         "energy": state.energy if state else None,
         "mood": state.mood if state else None,
         "streak_days": streak,
+        "is_fresh_start": fresh,
         "today_loops": loops,
         "observations": [
             {
