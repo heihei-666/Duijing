@@ -22,6 +22,7 @@ from app.db import get_session, session_scope
 from app.deps import ensure_profile, get_current_user
 from app.models import (
     AIObservation,
+    EventCard,
     DebateMessage,
     DebateParticipant,
     DebateReview,
@@ -29,6 +30,7 @@ from app.models import (
     DebateStatus,
     User,
     WeaknessCard,
+    WeaknessLoop,
 )
 from app.services import debate as debate_service
 from app.services import push as push_service
@@ -181,19 +183,21 @@ async def create_debate(
     profile = await ensure_profile(session, user)
 
     # 辩题来源优先级（方案 3.1）：P0 用户自己出题 → P1 回环 → P2 事件卡 → P3 AI 生成
+    loop_id, weakness_id = await _resolve_source(session, payload, user)
+    # 刚创建时只有发起人，必然是单人模式
     context = await debate_service.load_context(
-        session, user.id, weakness_id=payload.weakness_id, loop_id=payload.loop_id
+        session, user.id, weakness_id=weakness_id, loop_id=loop_id, mode="debater"
     )
 
     topic = payload.topic.strip()
     stance = payload.stance.strip()
 
     if not topic:
-        scene = _scene_from_source(payload, context)
+        scene = await _scene_from_source(session, payload, context, user)
         if not scene:
             raise HTTPException(
                 status_code=400,
-                detail="请提供辩题、场景描述（scene），或关联一个回环",
+                detail="请提供辩题、场景描述（scene），或从弱点 / 回环 / 事件卡起辩",
             )
         topic, generated_stance = await debate_service.generate_topic(scene, context)
         stance = stance or generated_stance
@@ -201,15 +205,24 @@ async def create_debate(
     if not topic:
         raise HTTPException(status_code=400, detail="辩题生成失败，请手动输入辩题")
 
+    # source_type 没显式给就按上下文推断，避免明明是从回环起的辩
+    # 却记成 manual——那会让「我这段时间在练什么」这类统计失真
+    source_type = payload.source_type
+    if source_type == "manual":
+        if loop_id or weakness_id:
+            source_type = "weakness"
+        elif payload.source_id and payload.source_type == "event_card":
+            source_type = "event_card"
+
     room = DebateRoom(
         user_id=user.id,
         topic=topic[:200],
         stance=stance[:200],
         status=DebateStatus.ACTIVE.value,
-        source_type=payload.source_type,
+        source_type=source_type,
         source_id=payload.source_id,
-        loop_id=payload.loop_id,
-        weakness_id=payload.weakness_id,
+        loop_id=loop_id,
+        weakness_id=weakness_id,
         max_rounds=debate_service.decide_max_rounds(
             topic, has_loop=payload.loop_id is not None, level=profile.level
         ),
@@ -232,20 +245,78 @@ async def create_debate(
     }
 
 
-def _scene_from_source(payload: CreateDebatePayload, context: debate_service.DebateContext) -> str:
+async def _resolve_source(
+    session: AsyncSession, payload: CreateDebatePayload, user: User
+) -> tuple[int | None, int | None]:
+    """把 source_type/source_id 归一成 (loop_id, weakness_id)。
+
+    前端从不同入口进来时给的东西不一样：从弱点详情页过来带 weakness_id，
+    从回环条目过来带 loop_id，从事件卡历史过来只有 source_type/source_id。
+    这里统一收口，后面就不用到处判断。
+    """
+    loop_id = payload.loop_id
+    weakness_id = payload.weakness_id
+
+    if payload.source_type == "weakness" and payload.source_id and not weakness_id:
+        card = await session.get(WeaknessCard, payload.source_id)
+        if card is not None and card.user_id == user.id:
+            weakness_id = card.id
+    elif payload.source_type == "event_card" and payload.source_id:
+        # 事件卡来源没有「关联回环」的概念，只有一条内容当场景
+        pass
+
+    # 给了 loop_id 就顺带把它的弱点也带上，AI 才能看到完整的回环上下文
+    if loop_id and not weakness_id:
+        loop = await session.get(WeaknessLoop, loop_id)
+        if loop is not None:
+            weakness_id = loop.weakness_id
+
+    return loop_id, weakness_id
+
+
+async def _scene_from_source(
+    session: AsyncSession,
+    payload: CreateDebatePayload,
+    context: debate_service.DebateContext,
+    user: User,
+) -> str:
     """把「用户能说出口的东西」翻译成给 AI 的场景描述。
 
     优先级（对应方案 3.1 的辩题来源 P0–P3）：
       1. 用户直接描述的场景（P0，最自然——用户通常说不出辩题，只会说发生了什么）
-      2. 关联的回环（P1）
-      3. 关联的弱点（P2）
+      2. 关联的回环（P1）——用真实的触发场景与预案，而不是元语言
+      3. 事件卡的场景（P2）
+      4. 关联的弱点（P3 的前置：先有弱点才谈得上围绕它出题）
+
+    注意这里产出的是**给模型的场景素材**，会被模型转写成辩题。
+    不要写「围绕回环「X」的实战场景」这种元语言——模型会把它当字面内容
+    塞进题目里，生成出「『围绕回环…的实战场景』这件事，问题出在做法还是判断」
+    这种读起来很怪的题。
     """
     if payload.scene.strip():
         return payload.scene.strip()
+
     if context.loop is not None:
-        return f"围绕回环「{context.loop.trigger_scene}」的实战场景"
+        parts = [f"我遇到过这样的情况：{context.loop.trigger_scene}。"]
+        if context.loop.body_signal:
+            parts.append(f"当时我的反应是{context.loop.body_signal}。")
+        if context.loop.action_plan:
+            parts.append(f"我打算这么做：{context.loop.action_plan}。")
+        parts.append("这件事到底该怎么处理才对？")
+        return "".join(parts)
+
+    if payload.source_type == "event_card" and payload.source_id:
+        card = await session.get(EventCard, payload.source_id)
+        if card is not None and card.user_id == user.id:
+            return f"我最近遇到了这样一件事：{card.content}"
+
     if context.weakness is not None:
-        return f"围绕弱点「{context.weakness.name}」的典型场景"
+        parts = [f"我发现自己有个问题：{context.weakness.name}。"]
+        if context.weakness.description:
+            parts.append(f"具体表现是{context.weakness.description}。")
+        parts.append("这种事该怎么面对？")
+        return "".join(parts)
+
     return ""
 
 
@@ -440,8 +511,22 @@ async def stream_reply(
                 profile = await ensure_profile(s, owner) if owner else None
                 level = profile.level if profile else "novice"
 
+                # 有人加入后 AI 要退到主持位（方案 3.1：多人时 AI 做主持 + 观察）。
+                # 参与者数量变了，人格就变——但同一房间内是稳定的，
+                # 所以缓存前缀不会因为刷新页面而失效。
+                participants = int(
+                    await s.scalar(
+                        select(func.count(DebateParticipant.id)).where(
+                            DebateParticipant.room_id == room_id
+                        )
+                    )
+                    or 0
+                )
+                room_mode = "host" if participants > 1 else "debater"
+
                 context = await debate_service.load_context(
-                    s, room.user_id, weakness_id=room.weakness_id, loop_id=room.loop_id
+                    s, room.user_id, weakness_id=room.weakness_id, loop_id=room.loop_id,
+                    mode=room_mode,
                 )
 
                 buffer: list[str] = []

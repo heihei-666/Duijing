@@ -65,11 +65,17 @@ class DebateContext:
     advantages: list[Advantage] = field(default_factory=list)
     loop: WeaknessLoop | None = None
     weakness: WeaknessCard | None = None
+    # "debater"（单人，AI 是对手）| "host"（多人，AI 是主持兼观察者）
+    # 方案 3.1：多人辩论时「AI 做主持 + 观察，不作为独立辩手」
+    mode: str = "debater"
 
     def stable_system(self) -> str:
-        """辩论房用的缓存前缀（含辩论人格）。"""
+        """辩论房用的缓存前缀（含人格）。
+
+        人格由 mode 决定，但**在一个房间内不变**，所以缓存前缀依然逐字节稳定。
+        """
         return prompts.build_stable_system(
-            self.weaknesses, self.advantages, self.loop, self.weakness
+            self.weaknesses, self.advantages, self.loop, self.weakness, mode=self.mode
         )
 
     def context_blocks(self) -> str:
@@ -81,7 +87,7 @@ class DebateContext:
 
 async def load_context(
     session: AsyncSession, user_id: int, *, weakness_id: int | None = None,
-    loop_id: int | None = None,
+    loop_id: int | None = None, mode: str = "debater",
 ) -> DebateContext:
     """加载拼接前缀所需的全部素材。
 
@@ -114,6 +120,7 @@ async def load_context(
         advantages=list(advantage_rows.scalars().all()),
         loop=loop,
         weakness=weakness,
+        mode=mode,
     )
 
 
@@ -208,7 +215,7 @@ async def generate_opening(
     room: DebateRoom, context: DebateContext, *, level: str = "novice"
 ) -> str:
     messages = prompts.build_opening_messages(
-        context.stable_system(), room.topic, room.stance, level=level
+        context.stable_system(), room.topic, room.stance, level=level, mode=context.mode
     )
     response = await complete(TASK_DEBATE_REPLY, messages, temperature=0.8, max_tokens=2000)
     return response.text.strip() or "我先开始：这个立场我持保留意见。你怎么看？"
@@ -233,7 +240,9 @@ def stream_reply(room: DebateRoom, context: DebateContext, history, latest: str,
         room.stance,
         prior,
         latest,
-        level=level,
+        # host 模式下复用同一个参数位来切换发言指引；
+        # 传字符串标记而不是加新参数，是为了不动已有的调用契约
+        level="__host__" if context.mode == "host" else level,
     )
     # max_tokens 给足：思考模式下推理与正文共用预算，实测一次辩论回复
     # 推理约 400-500 token、正文约 250 token，800 在长回复时会不够。

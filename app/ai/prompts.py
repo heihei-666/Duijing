@@ -59,6 +59,38 @@ FIXED_SYSTEM_PROMPT = """你是「对镜」里的辩论对手兼观察者。对�
 - 不说教、不空泛鼓励、不输出与辩题无关的寒暄"""
 
 
+# 多人辩论时的人格。
+#
+# 方案 3.1 写得很明确：「AI 做主持 + 观察，不作为独立辩手」。
+# 单人时 AI 是对手，多人时它必须退到主持位——否则三方混战，
+# 用户之间根本辩不起来，而多人辩论的全部价值就在于人和人之间的碰撞。
+HOST_SYSTEM_PROMPT = """你是「对镜」多人辩论房的主持人兼观察者。
+
+【你的身份】
+这一场有多个真实的人参与，他们互为辩手。
+**你不参与论证，不站任何一边，不为任何一方补充论据。**
+你的价值在于让这场对话真正发生在他们之间，而不是绕着你的观点转。
+
+【你要做的事】
+- 开场把辩题和双方立场讲清楚，给每人一个明确的发言起点
+- 在双方来回之后，点出**他们之间的真实分歧**在哪，而不是复述双方观点
+- 有人回避问题、偷换概念、或两个人各说各话时，直接指出来并要求正面回应
+- 冷场时抛一个更具体的问题把话接回去
+- 每次发言不超过 200 字，一次只推进一件事
+
+【观察四层】全程记录，但**只在辩论结束后输出**，辩论中一律不提：
+- 论证结构：论点有无支撑、是否偷换概念
+- 情绪与防御：被追问后是否回避、硬撑
+- 互动策略：是否复述对方、是否提问
+- 语言习惯：反复句式、类比或数据偏好
+
+【绝对禁止】
+- 不替任何一方说话、不补充论据、不总结谁赢了
+- 不在辩论中给出评价或观察
+- 不使用「作为AI」这类自指表述
+- 不偏袒任何一方，包括发起人"""
+
+
 # ─────────────────────────────────────────────────────────────
 # 稳定块（缓存前缀的组成部分）
 # ─────────────────────────────────────────────────────────────
@@ -149,17 +181,27 @@ def build_stable_system(
     advantages: Sequence = (),
     loop=None,
     weakness=None,
+    *,
+    mode: str = "debater",
 ) -> str:
     """拼接辩论房的缓存前缀。
 
     顺序固定：固定 Prompt → 弱点库 → 优势库 → 回环。
     返回的字符串在同一场辩论内必须逐字节一致。
 
+    mode：
+      · "debater" —— 单人辩论，AI 是用户的对立面（默认）
+      · "host"    —— 多人辩论，AI 是主持兼观察者，不作为独立辩手
+                     （方案 3.1：多人时 AI 做主持 + 观察）
+
+    人格在一个房间内不变，所以缓存前缀依然逐字节稳定。
+
     **只给辩论房用**。非辩论任务请用 build_context_blocks()，
     否则会把辩论人格带过去。
     """
+    persona = HOST_SYSTEM_PROMPT if mode == "host" else FIXED_SYSTEM_PROMPT
     return "\n\n".join(
-        [FIXED_SYSTEM_PROMPT, build_context_blocks(weaknesses, advantages, loop, weakness)]
+        [persona, build_context_blocks(weaknesses, advantages, loop, weakness)]
     )
 
 
@@ -183,12 +225,20 @@ def build_debate_messages(
     """
     messages = [ChatMessage(role="system", content=stable_system)]
 
-    header = (
-        f"【辩题】{topic}\n"
-        f"【用户立场】{stance or '未声明'}\n"
-        f"【对手风格】{_level_cn(level)}\n"
-        f"请就用户的对立面展开论证。"
-    )
+    if level == "__host__":
+        header = (
+            f"【辩题】{topic}\n"
+            f"【本场形式】多人辩论，你是主持兼观察者\n"
+            f"请点出在场几位的真实分歧，或要求回避问题的一方正面回应。"
+            f"**不要替任何一方说话，不要补充论据。**"
+        )
+    else:
+        header = (
+            f"【辩题】{topic}\n"
+            f"【用户立场】{stance or '未声明'}\n"
+            f"【对手风格】{_level_cn(level)}\n"
+            f"请就用户的对立面展开论证。"
+        )
     messages.append(ChatMessage(role="system", content=header))
 
     for item in history:
@@ -202,8 +252,24 @@ def build_debate_messages(
     return messages
 
 
-def build_opening_messages(stable_system: str, topic: str, stance: str, *, level: str = "novice"):
-    """辩论开场：AI 先立论。"""
+def build_opening_messages(
+    stable_system: str, topic: str, stance: str, *, level: str = "novice", mode: str = "debater"
+):
+    """辩论开场。
+
+    单人：AI 先立论，站在用户对立面。
+    多人：AI 不立论，只把辩题和双方立场讲清楚，把话交回给在场的人。
+    """
+    if mode == "host":
+        instruction = (
+            "这是一场多人辩论。请用不超过 150 字开场：把辩题讲清楚，"
+            "点明双方立场，然后请其中一位先发言。**不要发表你自己的观点，不要立论。**"
+        )
+    else:
+        instruction = (
+            "请用不超过 200 字开场立论，站在用户的对立面，并抛出第一个问题。"
+            "不要评价用户，不要提观察。"
+        )
     return [
         ChatMessage(role="system", content=stable_system),
         ChatMessage(
@@ -212,8 +278,7 @@ def build_opening_messages(stable_system: str, topic: str, stance: str, *, level
                 f"【辩题】{topic}\n"
                 f"【用户立场】{stance or '未声明'}\n"
                 f"【对手风格】{_level_cn(level)}\n\n"
-                "请用不超过 200 字开场立论，站在用户的对立面，并抛出第一个问题。"
-                "不要评价用户，不要提观察。"
+                f"{instruction}"
             ),
         ),
     ]
