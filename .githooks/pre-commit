@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+#
+# 对镜 · 提交前密钥检查
+#
+# 启用方式（每个克隆只需要执行一次）：
+#     git config core.hooksPath .githooks
+#
+# 为什么需要它：`.gitignore` 能挡住 `.env`，但它是约定不是强制——
+# `git add -f` 就能绕过，手工把密钥粘到别的文件里更防不住。
+# 密钥一旦进了提交，即使下个提交删掉，旧提交仍然能被翻出来，
+# 唯一的补救办法是去服务商轮换密钥。
+#
+# 所以在这里挡住：检查**暂存区**（也就是这次真正要提交的内容）。
+#
+set -euo pipefail
+
+RED=$'\033[1;31m'; YELLOW=$'\033[1;33m'; GREEN=$'\033[1;32m'; OFF=$'\033[0m'
+fail=0
+
+# ── 1. 有没有把 .env 加进来 ──────────────────────────────────
+staged_env="$(git diff --cached --name-only --diff-filter=ACM | grep -E '(^|/)\.env$' || true)"
+if [ -n "$staged_env" ]; then
+  printf '%s✗ 暂存区里有 .env 文件：%s%s\n' "$RED" "$staged_env" "$OFF"
+  printf '  修复：git rm --cached %s\n' "$staged_env"
+  fail=1
+fi
+
+# ── 2. 暂存的内容里有没有真实形态的密钥 ──────────────────────
+# sk- 后面跟 20 位以上随机字符；sk-xxx / sk-fake 这类占位符不会命中。
+secret_hits="$(
+  git diff --cached -U0 --diff-filter=ACM \
+    | grep -E '^\+' \
+    | grep -vE '^\+\+\+' \
+    | grep -oE 'sk-[A-Za-z0-9]{20,}' \
+    | sort -u || true
+)"
+if [ -n "$secret_hits" ]; then
+  printf '%s✗ 暂存的内容里出现了疑似真实密钥：%s\n' "$RED" "$OFF"
+  printf '    %s\n' $secret_hits | cut -c1-24
+  printf '  修复：把密钥移到 .env（已忽略），文件里只留空值或占位符。\n'
+  fail=1
+fi
+
+# ── 3. 数据库与运行时产物 ────────────────────────────────────
+staged_junk="$(
+  git diff --cached --name-only --diff-filter=ACM \
+    | grep -E '(^data/|^node_modules/|^web/dist/|__pycache__|\.pyc$|\.db(-wal|-shm)?$)' || true
+)"
+if [ -n "$staged_junk" ]; then
+  printf '%s✗ 暂存区里有运行时产物：%s%s\n' "$RED" "$staged_junk" "$OFF"
+  fail=1
+fi
+
+if [ "$fail" -ne 0 ]; then
+  printf '\n%s提交已阻止。%s如果确认是误报，用 git commit --no-verify 跳过。\n' "$YELLOW" "$OFF"
+  exit 1
+fi
+
+exit 0
