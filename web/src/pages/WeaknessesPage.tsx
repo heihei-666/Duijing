@@ -10,6 +10,13 @@ import { WeaknessActionsSheet } from '@/features/weakness/WeaknessActionsSheet';
 import { WeaknessFormSheet } from '@/features/weakness/WeaknessFormSheet';
 import { WeaknessNote } from '@/features/weakness/WeaknessNote';
 import { WeaknessSection } from '@/features/weakness/WeaknessSection';
+import { WeaknessBoard } from '@/features/weakness/WeaknessBoard';
+import { useIsWideScreen } from '@/features/weakness/useIsWideScreen';
+import {
+  BoardMoveError,
+  moveWeaknessByDrop,
+  placeCardInGroups,
+} from '@/features/weakness/boardDrag';
 import {
   listWeaknesses,
   type WeaknessCardData,
@@ -61,10 +68,14 @@ const SECTIONS: SectionSpec[] = [
 
 /**
  * 弱点墙（方案 3.2）。
- * 四区：AI 观察候选 / 观察中 / 改善中 / 暂存。移动端列表态，分区可折叠，长按便签改状态。
+ * 四区：AI 观察候选 / 观察中 / 改善中 / 暂存。
+ * 窄屏（<768px）：列表态，分区可折叠，长按便签改状态。
+ * 宽屏（≥768px）：黑板拖拽，三区 + 垃圾桶（方案 4.1，dnd-kit）。
  */
 export default function WeaknessesPage() {
   const navigate = useNavigate();
+  /** 只切换渲染哪一套，数据与接口完全共用；窄屏那条路径没有任何改动 */
+  const isWide = useIsWideScreen();
 
   const [data, setData] = useState<WeaknessGroupsData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -76,6 +87,8 @@ export default function WeaknessesPage() {
   const [trashOpen, setTrashOpen] = useState(false);
   const [actionCard, setActionCard] = useState<WeaknessCardData | null>(null);
   const [justCreatedId, setJustCreatedId] = useState<number | null>(null);
+  /** 黑板上有一次状态流转在飞：期间锁住拖拽，保证回滚快照不被并发覆盖 */
+  const [pendingMoveId, setPendingMoveId] = useState<number | null>(null);
 
   /** silent = 后台刷新，不切成骨架屏（改完状态后用） */
   const load = useCallback(async (silent = false) => {
@@ -116,6 +129,38 @@ export default function WeaknessesPage() {
   async function handleRestored(message: string) {
     flash(message);
     await load(true);
+  }
+
+  /**
+   * 黑板拖拽的落点处理：先动界面（乐观更新），再发请求，失败把便签放回原区。
+   *
+   * 落点 → 接口 的映射全部在 `moveWeaknessByDrop` 里：
+   *   观察中 / 改善中 → PATCH /weaknesses/{id} {status}
+   *   垃圾桶          → POST  /weaknesses/{id}/archive（PATCH status:'archived' 后端会 400）
+   *   从垃圾桶出来    → POST  /weaknesses/{id}/restore
+   */
+  async function handleBoardMove(card: WeaknessCardData, target: WeaknessStatus) {
+    if (!data || pendingMoveId !== null) return;
+
+    const snapshot = data.groups;
+    setPendingMoveId(card.id);
+    setData({ ...data, groups: placeCardInGroups(snapshot, card, target) });
+
+    try {
+      const outcome = await moveWeaknessByDrop(card, target);
+      flash(outcome.message);
+      await load(true); // 成功后再以服务端为准（归档时间、删除倒计时都从这里回来）
+    } catch (cause) {
+      // 失败必须回滚，不能让界面显示一个并未保存的状态。
+      // 服务端一步都没走成 → 整体还原；只走了一半（恢复成功、接着改改善中失败）
+      // → 回滚到它真实落在的那个分区。
+      const landed = cause instanceof BoardMoveError ? cause.landed : null;
+      const groups = landed ? placeCardInGroups(snapshot, card, landed) : snapshot;
+      setData((current) => (current ? { ...current, groups } : current));
+      flash(cause instanceof Error ? cause.message : '移动失败，请稍后再试', true);
+    } finally {
+      setPendingMoveId(null);
+    }
   }
 
   if (loading) return <WeaknessSkeleton />;
@@ -168,33 +213,46 @@ export default function WeaknessesPage() {
         <p className={cn('text-xs', noticeError ? 'text-danger' : 'text-tertiary')}>{notice}</p>
       ) : null}
 
-      <div className="space-y-4">
-        {SECTIONS.map((section) => {
-          const cards = data.groups[section.status] ?? [];
-          return (
-            <WeaknessSection
-              key={section.status}
-              title={section.title}
-              count={cards.length}
-              emptyTitle={section.emptyTitle}
-              emptyHint={section.emptyHint}
-              defaultOpen={section.defaultOpen}
-            >
-              {cards.map((card) => (
-                <WeaknessNote
-                  key={card.id}
-                  card={card}
-                  highlighted={card.id === justCreatedId}
-                  onOpen={(item) => navigate(`/weaknesses/${item.id}`)}
-                  onAction={setActionCard}
-                />
-              ))}
-            </WeaknessSection>
-          );
-        })}
-      </div>
+      {isWide ? (
+        <WeaknessBoard
+          groups={data.groups}
+          justCreatedId={justCreatedId}
+          locked={pendingMoveId !== null}
+          pendingId={pendingMoveId}
+          onOpen={(item) => navigate(`/weaknesses/${item.id}`)}
+          onAction={setActionCard}
+          onMove={(card, target) => void handleBoardMove(card, target)}
+          onReject={(message) => flash(message)}
+        />
+      ) : (
+        <div className="space-y-4">
+          {SECTIONS.map((section) => {
+            const cards = data.groups[section.status] ?? [];
+            return (
+              <WeaknessSection
+                key={section.status}
+                title={section.title}
+                count={cards.length}
+                emptyTitle={section.emptyTitle}
+                emptyHint={section.emptyHint}
+                defaultOpen={section.defaultOpen}
+              >
+                {cards.map((card) => (
+                  <WeaknessNote
+                    key={card.id}
+                    card={card}
+                    highlighted={card.id === justCreatedId}
+                    onOpen={(item) => navigate(`/weaknesses/${item.id}`)}
+                    onAction={setActionCard}
+                  />
+                ))}
+              </WeaknessSection>
+            );
+          })}
+        </div>
+      )}
 
-      {data.groups.archived && data.groups.archived.length > 0 ? (
+      {!isWide && data.groups.archived && data.groups.archived.length > 0 ? (
         <button
           type="button"
           onClick={() => setTrashOpen(true)}

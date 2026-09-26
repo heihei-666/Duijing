@@ -5,6 +5,7 @@ import { Button } from '@/components/common/Button';
 import { EmptyState } from '@/components/common/EmptyState';
 import { CloseIcon } from '@/components/icons';
 import { cn } from '@/lib/cn';
+import { SourceDebateButton } from '@/features/debate/SourceDebateButton';
 import { LoopCard } from '@/features/weakness/LoopCard';
 import { LoopCreateSheet } from '@/features/weakness/LoopCreateSheet';
 import { ConfidenceStars, DomainTags } from '@/features/weakness/MetaTags';
@@ -267,7 +268,7 @@ export default function WeaknessDetailPage() {
         ) : (
           <div className="space-y-3">
             {loops.map((loop) => (
-              <div key={loop.id} id={`loop-${loop.id}`}>
+              <div key={loop.id} id={`loop-${loop.id}`} className="space-y-2">
                 <LoopCard
                   loop={loop}
                   highlighted={highlightLoopId === loop.id}
@@ -278,6 +279,9 @@ export default function WeaknessDetailPage() {
                   }}
                   onRecord={setRecordLoop}
                 />
+                {/* 闭环的最后一跳：拿这条回环直接起一场辩论（辩题来源 P1）。
+                    一键发起、不需要输入，成功后就跳进辩论房。 */}
+                <SourceDebateButton source={{ kind: 'loop', loopId: loop.id }} />
               </div>
             ))}
           </div>

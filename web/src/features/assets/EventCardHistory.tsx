@@ -5,6 +5,7 @@ import { Button } from '@/components/common/Button';
 import { EmptyState } from '@/components/common/EmptyState';
 import { cn } from '@/lib/cn';
 import { formatTimestamp } from '@/lib/date';
+import { SourceDebateButton } from '@/features/debate/SourceDebateButton';
 import { AiIcon } from '@/features/weakness/icons';
 import { TextAreaField } from '@/features/weakness/TextAreaField';
 import {
@@ -28,6 +29,10 @@ export function EventCardHistory() {
 
   const [cards, setCards] = useState<EventCardData[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // 事件卡是永久保留的，久了会很长。分页加载而不是一次拉完——
+  // 这个列表没有搜索，用户大多只看最近几条。
+  const [total, setTotal] = useState(0);
+  const [loadingMore, setLoadingMore] = useState(false);
 
   const [content, setContent] = useState('');
   const [saving, setSaving] = useState(false);
@@ -42,11 +47,32 @@ export function EventCardHistory() {
     try {
       const data = await listEventCards({ limit: PAGE_SIZE });
       setCards(data.cards);
+      setTotal(data.total);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : '事件卡加载失败');
       setCards([]);
+      setTotal(0);
     }
   }, []);
+
+  /** 追加下一页。失败时保留已加载的内容，只提示这一次没成功。 */
+  const loadMore = useCallback(async () => {
+    if (loadingMore || !cards) return;
+    setLoadingMore(true);
+    try {
+      const data = await listEventCards({ limit: PAGE_SIZE, offset: cards.length });
+      // 按 id 去重：翻页期间若新增了事件卡，offset 会错位导致重复
+      setCards((prev) => {
+        const seen = new Set((prev ?? []).map((item) => item.id));
+        return [...(prev ?? []), ...data.cards.filter((item) => !seen.has(item.id))];
+      });
+      setTotal(data.total);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : '加载更多失败');
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [cards, loadingMore]);
 
   useEffect(() => {
     void load();
@@ -189,10 +215,30 @@ export function EventCardHistory() {
                   关联回环：{card.linked_loops.map((loop) => loop.trigger_scene).join('、')}
                 </p>
               ) : null}
+              {/* 闭环入口：把这张卡直接变成一场辩论（辩题来源 P2）。
+                  一键发起、不需要输入，成功后就跳进辩论房。 */}
+              <SourceDebateButton
+                source={{ kind: 'event_card', cardId: card.id }}
+                variant="outline"
+                className="mt-2"
+              />
             </li>
           ))}
         </ul>
       )}
+
+        {/* 还有更多时才显示。用 ghost 而不是主色——它是次要动作，
+            不该和「记一笔」抢注意力。 */}
+        {cards && cards.length > 0 && cards.length < total ? (
+          <button
+            type="button"
+            onClick={() => void loadMore()}
+            disabled={loadingMore}
+            className="mt-4 h-11 w-full rounded-xl text-[13px] text-brand transition-colors hover:bg-elevated disabled:opacity-50"
+          >
+            {loadingMore ? '加载中…' : `加载更早的（还有 ${total - cards.length} 条）`}
+          </button>
+        ) : null}
     </div>
   );
 }

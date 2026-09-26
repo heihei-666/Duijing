@@ -4,6 +4,11 @@ import { cn } from '@/lib/cn';
 import { Button } from '@/components/common/Button';
 import { Field } from '@/components/common/Field';
 import { Sheet } from '@/components/common/Sheet';
+import {
+  EMPTY_LOOP_ASSETS,
+  LoopAssetPicker,
+  type LoopAssetSelection,
+} from '@/features/assets/LoopAssetPicker';
 import { createLoop, updateLoop, type LoopData } from '@/features/weakness/api';
 import { TextAreaField } from '@/features/weakness/TextAreaField';
 
@@ -71,6 +76,8 @@ export function LoopCreateSheet({
   const [formSignal, setFormSignal] = useState('');
   const [formPlan, setFormPlan] = useState('');
   const [formActivate, setFormActivate] = useState(true);
+  /** 预案里引用的优势 / 原则（方案 3.3）。对话式三步不收集，只有表单 tab 用 */
+  const [formAssets, setFormAssets] = useState<LoopAssetSelection>(EMPTY_LOOP_ASSETS);
   const [formPending, setFormPending] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
 
@@ -166,6 +173,9 @@ export function LoopCreateSheet({
         body_signal: formSignal.trim(),
         action_plan: formPlan.trim(),
         activate: formActivate,
+        // 没选就是空数组，和后端 default_factory=list 等价
+        linked_advantage_ids: formAssets.advantageIds,
+        linked_principle_ids: formAssets.principleIds,
       });
       onFinished(formActivate ? '回环已启用' : '已存为草稿');
     } catch (cause) {
@@ -292,6 +302,13 @@ export function LoopCreateSheet({
               maxLength={2000}
               value={formPlan}
               onChange={(event) => setFormPlan(event.target.value)}
+            />
+
+            {/* 方案 3.3：预案可从优势库、原则库引用（只列已确认的优势 / 已启用的原则） */}
+            <LoopAssetPicker
+              value={formAssets}
+              onChange={setFormAssets}
+              disabled={formPending}
             />
 
             <label className="flex min-h-[44px] items-center gap-2 text-[13px] text-secondary">

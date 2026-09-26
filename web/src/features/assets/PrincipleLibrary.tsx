@@ -4,24 +4,43 @@ import { Button } from '@/components/common/Button';
 import { EmptyState } from '@/components/common/EmptyState';
 import { Field } from '@/components/common/Field';
 import { cn } from '@/lib/cn';
+import { formatTimestamp } from '@/lib/date';
 import { LinkIcon, PinIcon } from '@/features/weakness/icons';
 import {
+  archivePrinciple,
   confirmPrinciple,
   createPrinciple,
   ignorePrinciple,
   listPrinciples,
+  PRINCIPLE_ARCHIVED_LABELS,
   PRINCIPLE_CONFIDENCE_LABELS,
   PRINCIPLE_SOURCE_LABELS,
+  restorePrinciple,
   updatePrinciple,
   type PrincipleData,
 } from '@/features/assets/api';
+import { ArchivedSection, type ArchivedEntry } from '@/features/assets/ArchivedSection';
 import { LoopPickerSheet } from '@/features/assets/LoopPickerSheet';
+
+/** 归档条目 → 「已归档」段的展示结构（正文取 content，时间取 updated_at） */
+function toArchivedEntry(item: PrincipleData): ArchivedEntry {
+  return {
+    id: item.id,
+    text: item.content,
+    statusLabel:
+      item.status === 'ignored' ? PRINCIPLE_ARCHIVED_LABELS.ignored : PRINCIPLE_ARCHIVED_LABELS.archived,
+    time: item.updated_at ? formatTimestamp(item.updated_at) : null,
+  };
+}
 
 /**
  * 原则库（方案 3.6 / 配色方案 八）。
  * 候选：--sticky-observing-bg 暖黄底（和弱点「观察中」一致，都是待处理）；
  * 启用中：白底暖黑字；置顶用主色图钉；来源标签用 --info-light 底 + --info 字。
  * 候选不消失、不设 24 小时限制；忽略留痕，AI 不再重复推同一条。
+ *
+ * 归档走 `POST /api/principles/{id}/archive`，被忽略的和被归档的一样能从
+ * `POST /api/principles/{id}/restore` 回到「启用中」；两者都收进「已归档」折叠段。
  */
 export function PrincipleLibrary() {
   const [principles, setPrinciples] = useState<PrincipleData[] | null>(null);
@@ -36,7 +55,8 @@ export function PrincipleLibrary() {
   const load = useCallback(async () => {
     setError(null);
     try {
-      const data = await listPrinciples(['candidate', 'active']);
+      // archived / ignored 一起拉：两者都要出现在「已归档」里，一次请求分桶即可
+      const data = await listPrinciples(['candidate', 'active', 'archived', 'ignored']);
       setPrinciples(data.principles);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : '原则库加载失败');
@@ -110,8 +130,40 @@ export function PrincipleLibrary() {
     }
   }
 
+  /** 归档：启用中 → 已归档（后端只返回 ok，所以归档后自己组织一句文案） */
+  async function handleArchive(item: PrincipleData) {
+    setBusyId(item.id);
+    setError(null);
+    try {
+      await archivePrinciple(item.id);
+      setNotice('已归档，可在「已归档」里恢复');
+      await load();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : '操作失败，请稍后再试');
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  /** 恢复：archived / ignored → 启用中 */
+  async function handleRestore(entry: ArchivedEntry) {
+    setBusyId(entry.id);
+    setError(null);
+    try {
+      await restorePrinciple(entry.id);
+      setNotice('已恢复，回到「启用中」');
+      await load();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : '恢复失败，请稍后再试');
+    } finally {
+      setBusyId(null);
+    }
+  }
+
   const candidates = principles?.filter((item) => item.status === 'candidate') ?? [];
   const active = principles?.filter((item) => item.status === 'active') ?? [];
+  const archivedPrinciples =
+    principles?.filter((item) => item.status === 'archived' || item.status === 'ignored') ?? [];
 
   return (
     <div className="space-y-4">
@@ -170,7 +222,7 @@ export function PrincipleLibrary() {
                       <Button
                         size="sm"
                         variant="ghost"
-                        className="text-tertiary hover:bg-surface"
+                        className="min-h-[44px] text-tertiary hover:bg-surface"
                         disabled={busyId !== null}
                         onClick={() => void handleIgnore(item)}
                       >
@@ -207,7 +259,7 @@ export function PrincipleLibrary() {
                       <Button
                         size="sm"
                         variant="ghost"
-                        className={cn(item.pinned ? 'text-brand' : 'text-tertiary')}
+                        className={cn('min-h-[44px]', item.pinned ? 'text-brand' : 'text-tertiary')}
                         disabled={busyId !== null}
                         onClick={() => void handlePin(item)}
                       >
@@ -216,11 +268,21 @@ export function PrincipleLibrary() {
                       <Button
                         size="sm"
                         variant="ghost"
-                        className="text-tertiary"
+                        className="min-h-[44px] text-tertiary"
                         onClick={() => setPicker(item)}
                       >
                         <LinkIcon width={16} height={16} />
                         关联回环
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="min-h-[44px] text-tertiary"
+                        loading={busyId === item.id}
+                        disabled={busyId !== null}
+                        onClick={() => void handleArchive(item)}
+                      >
+                        归档
                       </Button>
                     </div>
                   </li>
@@ -228,6 +290,15 @@ export function PrincipleLibrary() {
               </ul>
             )}
           </section>
+
+          {/* 已归档：archived（手动归档）+ ignored（候选里点过忽略） */}
+          <ArchivedSection
+            entries={archivedPrinciples.map(toArchivedEntry)}
+            busyId={busyId}
+            disabled={busyId !== null}
+            emptyHint="这里放归档和被忽略的原则。归档不等于删除，随时可以恢复。"
+            onRestore={(entry) => void handleRestore(entry)}
+          />
         </>
       )}
 

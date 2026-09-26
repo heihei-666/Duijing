@@ -34,8 +34,12 @@ export interface AdvantageData {
   archived_at: string | null;
 }
 
+/**
+ * `status_filter` 支持 `archived` / `removed`（后端 `list_advantages` 原样透传给 `in_`）。
+ * `types.ts` 的 `AdvantageStatus` 里没有 `removed`，而那个文件不允许改，所以这里放宽参数类型。
+ */
 export function listAdvantages(
-  statuses: AdvantageStatus[],
+  statuses: Array<AdvantageStatus | 'removed'>,
 ): Promise<{ advantages: AdvantageData[]; total: number; pending_count: number }> {
   return apiRequest<{ advantages: AdvantageData[]; total: number; pending_count: number }>(
     '/advantages',
@@ -49,6 +53,28 @@ export function confirmAdvantage(id: number): Promise<{ advantage: AdvantageData
 
 export function removeAdvantage(id: number): Promise<{ ok: boolean; note?: string }> {
   return apiRequest<{ ok: boolean; note?: string }>(`/advantages/${id}/remove`, { method: 'POST' });
+}
+
+/**
+ * 归档优势（已确认 → 已归档）。
+ *
+ * ⚠ 后端**没有** `POST /api/advantages/{id}/archive`：`app/api/advantages.py` 只暴露
+ * confirm / remove / restore 三个动作，`archive` 只存在于定时任务 `archive_stale()` 内部
+ * （待确认超 30 天自动归档）。所以「归档」这个动作只能落到 `remove` 上——
+ * 它本来就是「移出正常列表 + 留痕」的语义（status=removed，AI 不再重复入库同一标签），
+ * 而 `restore` 同样接受 `removed`，恢复后回到 pending。
+ *
+ * 保留独立的 `archiveAdvantage()` 而不是让调用方直接写 `removeAdvantage()`：
+ * 语义在调用处可见（待确认→移除 / 已确认→归档），
+ * 后端将来补上 `/archive` 时只需改这一个函数体。
+ */
+export function archiveAdvantage(id: number): Promise<{ ok: boolean; note?: string }> {
+  return apiRequest<{ ok: boolean; note?: string }>(`/advantages/${id}/remove`, { method: 'POST' });
+}
+
+/** 恢复优势：archived / removed → pending（待确认） */
+export function restoreAdvantage(id: number): Promise<{ advantage: AdvantageData }> {
+  return apiRequest<{ advantage: AdvantageData }>(`/advantages/${id}/restore`, { method: 'POST' });
 }
 
 /* ------------------------------------------------------------------ 原则 */
@@ -68,8 +94,9 @@ export interface PrincipleData {
   updated_at: string;
 }
 
+/** 同优势：`types.ts` 的 `PrincipleStatus` 里没有 `ignored`，这里放宽参数类型 */
 export function listPrinciples(
-  statuses: PrincipleStatus[],
+  statuses: Array<PrincipleStatus | 'ignored'>,
 ): Promise<{ principles: PrincipleData[]; total: number; candidate_count: number }> {
   return apiRequest<{ principles: PrincipleData[]; total: number; candidate_count: number }>(
     '/principles',
@@ -102,6 +129,16 @@ export function confirmPrinciple(id: number): Promise<{ principle: PrincipleData
 /** 忽略留痕：AI 不再重复推同一条 */
 export function ignorePrinciple(id: number): Promise<{ ok: boolean }> {
   return apiRequest<{ ok: boolean }>(`/principles/${id}/ignore`, { method: 'POST' });
+}
+
+/** 归档：启用中 → 已归档（`POST /api/principles/{id}/archive`，只返回 ok） */
+export function archivePrinciple(id: number): Promise<{ ok: boolean }> {
+  return apiRequest<{ ok: boolean }>(`/principles/${id}/archive`, { method: 'POST' });
+}
+
+/** 恢复原则：archived / ignored → active（启用中） */
+export function restorePrinciple(id: number): Promise<{ principle: PrincipleData }> {
+  return apiRequest<{ principle: PrincipleData }>(`/principles/${id}/restore`, { method: 'POST' });
 }
 
 /* ---------------------------------------------------------------- 事件卡 */
@@ -228,6 +265,23 @@ export const PRINCIPLE_CONFIDENCE_LABELS: Record<PrincipleConfidence, string> = 
   high: '高',
   medium: '中',
   low: '低',
+};
+
+/**
+ * 归档条目的状态说明。
+ *
+ * 优势的 `archived` 目前只能由定时任务产生（待确认超 30 天）；
+ * 用户在界面上点「归档」走的是 `remove`，所以那边看到的是「已移除」——
+ * 两者都在「已归档」折叠段里，也都能恢复。
+ */
+export const ADVANTAGE_ARCHIVED_LABELS: Record<'archived' | 'removed', string> = {
+  archived: '超期归档',
+  removed: '已移除',
+};
+
+export const PRINCIPLE_ARCHIVED_LABELS: Record<'archived' | 'ignored', string> = {
+  archived: '已归档',
+  ignored: '已忽略',
 };
 
 export const EVENT_RESULT_LABELS: Record<EventCardResult, string> = {
