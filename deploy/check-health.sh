@@ -58,7 +58,11 @@ alert() {
   elif command -v runuser >/dev/null 2>&1; then
     runner="runuser -u app --"
   fi
-  (cd "$APP_DIR" && $runner "$APP_DIR/venv/bin/python" -m app.scripts.notify_admin "$title" "$body") \
+  # PYTHONPATH 显式指定：`python -m` 靠 CWD 找包，一旦有人从别处调用
+  # （或将来改成绝对路径执行）就会报 No module named 'app'。
+  # 实测踩过这个坑，加上它就不再依赖调用时的当前目录。
+  (cd "$APP_DIR" && PYTHONPATH="$APP_DIR" $runner "$APP_DIR/venv/bin/python" \
+    -m app.scripts.notify_admin "$title" "$body") \
     >> "$LOG" 2>&1 || echo "  （推送发送失败，仅记录日志）" >> "$LOG"
 }
 
