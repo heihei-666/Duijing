@@ -34,6 +34,16 @@ class AIResponse:
     text: str
     usage: AIUsage = field(default_factory=AIUsage)
     provider: str = ""
+    # stop / length / content_filter ...。length 表示被 max_tokens 截断，
+    # 此时结构化任务的 JSON 必然是残缺的，调用方必须当成失败处理，不能拿去解析。
+    finish_reason: str = ""
+    # 思维链。只用于诊断与成本观测，绝不落业务表——
+    # 用户不该看到模型的思考过程，那是「后台」而不是「产品」。
+    reasoning: str = ""
+
+    @property
+    def truncated(self) -> bool:
+        return self.finish_reason == "length"
 
 
 class AIError(RuntimeError):
@@ -51,8 +61,15 @@ class AIProvider(Protocol):
         model: str | None = None,
         temperature: float = 0.7,
         max_tokens: int = 2048,
+        thinking: bool | None = None,
+        reasoning_effort: str | None = None,
     ) -> AIResponse:
-        """一次性返回完整结果。用于复盘、扫描、生成类任务。"""
+        """一次性返回完整结果。用于复盘、扫描、生成类任务。
+
+        thinking=False 会关闭思考模式。**对结构化短输出任务必须关**：
+        模型默认开思考且 effort=high，推理 token 与正式输出共用 max_tokens 预算，
+        不关的话很容易出现「budget 被推理吃光、content 返回空串」的情况。
+        """
         ...
 
     def stream(
@@ -62,6 +79,8 @@ class AIProvider(Protocol):
         model: str | None = None,
         temperature: float = 0.7,
         max_tokens: int = 2048,
+        thinking: bool | None = None,
+        reasoning_effort: str | None = None,
     ) -> AsyncIterator[str]:
         """流式返回增量文本。用于辩论房 SSE。"""
         ...
@@ -82,18 +101,38 @@ class BaseProvider:
     def configured(self) -> bool:
         return bool(self.api_key)
 
-    async def complete(self, messages, *, model=None, temperature=0.7, max_tokens=2048) -> AIResponse:
+    async def complete(
+        self, messages, *, model=None, temperature=0.7, max_tokens=2048,
+        thinking=None, reasoning_effort=None,
+    ) -> AIResponse:
         return await self._complete_impl(
-            messages, model=model or self.default_model, temperature=temperature, max_tokens=max_tokens
+            messages,
+            model=model or self.default_model,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            thinking=thinking,
+            reasoning_effort=reasoning_effort,
         )
 
-    def stream(self, messages, *, model=None, temperature=0.7, max_tokens=2048) -> AsyncIterator[str]:
+    def stream(
+        self, messages, *, model=None, temperature=0.7, max_tokens=2048,
+        thinking=None, reasoning_effort=None,
+    ) -> AsyncIterator[str]:
         return self._stream_impl(
-            messages, model=model or self.default_model, temperature=temperature, max_tokens=max_tokens
+            messages,
+            model=model or self.default_model,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            thinking=thinking,
+            reasoning_effort=reasoning_effort,
         )
 
-    async def _complete_impl(self, messages, *, model, temperature, max_tokens) -> AIResponse:
+    async def _complete_impl(
+        self, messages, *, model, temperature, max_tokens, thinking=None, reasoning_effort=None
+    ) -> AIResponse:
         raise NotImplementedError
 
-    def _stream_impl(self, messages, *, model, temperature, max_tokens) -> AsyncIterator[str]:
+    def _stream_impl(
+        self, messages, *, model, temperature, max_tokens, thinking=None, reasoning_effort=None
+    ) -> AsyncIterator[str]:
         raise NotImplementedError

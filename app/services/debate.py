@@ -43,6 +43,15 @@ from app.utils import clamp, now_utc
 logger = logging.getLogger("duijing.debate")
 
 
+class ReviewGenerationError(RuntimeError):
+    """复盘卡片生成失败。
+
+    刻意不做「兜底文案」——如果模型输出解析不了，
+    与其给用户一张写着通用鼓励语的假复盘，不如明确告诉他失败了、可以重试。
+    假的观察会污染弱点库，而弱点库是这个产品最不能脏的数据。
+    """
+
+
 # ─────────────────────────────────────────────────────────────
 # 上下文与缓存前缀
 # ─────────────────────────────────────────────────────────────
@@ -58,7 +67,14 @@ class DebateContext:
     weakness: WeaknessCard | None = None
 
     def stable_system(self) -> str:
+        """辩论房用的缓存前缀（含辩论人格）。"""
         return prompts.build_stable_system(
+            self.weaknesses, self.advantages, self.loop, self.weakness
+        )
+
+    def context_blocks(self) -> str:
+        """只要用户档案，不要辩论人格。复盘等非辩论任务用这个。"""
+        return prompts.build_context_blocks(
             self.weaknesses, self.advantages, self.loop, self.weakness
         )
 
@@ -194,7 +210,7 @@ async def generate_opening(
     messages = prompts.build_opening_messages(
         context.stable_system(), room.topic, room.stance, level=level
     )
-    response = await complete(TASK_DEBATE_REPLY, messages, temperature=0.8, max_tokens=600)
+    response = await complete(TASK_DEBATE_REPLY, messages, temperature=0.8, max_tokens=2000)
     return response.text.strip() or "我先开始：这个立场我持保留意见。你怎么看？"
 
 
@@ -202,15 +218,26 @@ def stream_reply(room: DebateRoom, context: DebateContext, history, latest: str,
     """返回异步生成器，逐块吐字。调用方负责把最终文本落库。"""
     from app.ai.router import stream as ai_stream
 
+    # history 是从库里按 seq 取的全量消息，**已经包含**用户刚发的那条；
+    # build_debate_messages 还会把 latest 追加到末尾，不剔除就会把同一句话
+    # 连续发两遍。模型收到重复发言会认为用户在强调，回答会跑偏。
+    prior = [m for m in history if m.role in ("ai", "user", "system")]
+    for index in range(len(prior) - 1, -1, -1):
+        if prior[index].role == "user" and prior[index].content == latest:
+            prior = prior[:index] + prior[index + 1 :]
+            break
+
     messages = prompts.build_debate_messages(
         context.stable_system(),
         room.topic,
         room.stance,
-        [m for m in history if m.role in ("ai", "user", "system")],
+        prior,
         latest,
         level=level,
     )
-    return ai_stream(TASK_DEBATE_REPLY, messages, temperature=0.85, max_tokens=800)
+    # max_tokens 给足：思考模式下推理与正文共用预算，实测一次辩论回复
+    # 推理约 400-500 token、正文约 250 token，800 在长回复时会不够。
+    return ai_stream(TASK_DEBATE_REPLY, messages, temperature=0.85, max_tokens=2000)
 
 
 async def generate_review(
@@ -231,10 +258,26 @@ async def generate_review(
     )
 
     messages = prompts.build_review_messages(
-        room.topic, room.stance, transcript, context.stable_system(), level=level
+        room.topic, room.stance, transcript, context.context_blocks(), level=level
     )
-    response = await complete(TASK_REVIEW_CARD, messages, temperature=0.6, max_tokens=900)
-    payload = extract_json(response.text) or {}
+    # max_tokens 给足：即便已关闭思考模式，复盘要输出 6 个字段的 JSON，
+    # 600 以下很容易被截断，截断的 JSON 解析出来是 None。
+    response = await complete(TASK_REVIEW_CARD, messages, temperature=0.6, max_tokens=1500)
+
+    if response.truncated:
+        logger.warning("复盘输出被截断 room=%s finish_reason=length", room.id)
+
+    payload = extract_json(response.text)
+    if payload is None:
+        logger.error(
+            "复盘 JSON 解析失败 room=%s finish=%s 原文前200字=%r",
+            room.id, response.finish_reason, (response.text or "")[:200],
+        )
+        raise ReviewGenerationError(
+            "AI 返回的复盘内容无法解析，请稍后重试"
+            if not response.truncated
+            else "AI 复盘输出被截断，请重试"
+        )
 
     def _text(key: str, fallback: str) -> str:
         value = payload.get(key)
@@ -247,9 +290,12 @@ async def generate_review(
         review = DebateReview(room_id=room.id, user_id=room.user_id)
         session.add(review)
 
-    review.good = _text("good", "你完整走完了这场辩论，没有中途退出。")
-    review.notice = _text("notice", "这一场没有暴露出明显的重复模式。")
-    review.next_time = _text("next_time", "下次试着在每轮开头先给结论，再给依据。")
+    # 结构性字段缺失时留空串，由前端决定怎么展示；
+    # 不填「你完整走完了这场辩论」这种放到谁身上都成立的废话——
+    # 那会让用户以为 AI 真的观察了他。
+    review.good = _text("good", "")
+    review.notice = _text("notice", "")
+    review.next_time = _text("next_time", "")
     review.alternative_action = _text("alternative_action", "")
     review.generated_at = now_utc()
     await session.flush()

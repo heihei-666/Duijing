@@ -336,3 +336,356 @@ class TestRateLimiter:
             client = None
 
         assert client_ip(FakeRequest()) == "203.0.113.7"
+
+
+# ─────────────────────────────────────────────────────────────
+# 思考模式控制（真实模型实测踩出来的坑）
+# ─────────────────────────────────────────────────────────────
+
+
+class TestThinkingMode:
+    """DeepSeek 与 MiMo 都默认开启思考模式，且 reasoning_content 与 content
+    **共用同一个 max_tokens 预算**。
+
+    实测：给复盘卡片设 max_tokens=700，推理把预算吃光，content 返回空串、
+    finish_reason=length，HTTP 却是 200 —— 失败完全静默，复盘卡片会变成空白。
+    """
+
+    def test_only_debate_keeps_thinking(self):
+        from app.ai.router import THINKING_TASKS, TASK_DEBATE_REPLY, TASK_REVIEW_CARD
+
+        assert THINKING_TASKS == frozenset({TASK_DEBATE_REPLY})
+        assert TASK_REVIEW_CARD not in THINKING_TASKS
+
+    def test_payload_encodes_thinking_flag(self):
+        """关闭思考必须走官方参数 thinking.type，
+        顶层 enable_thinking 实测被服务端忽略。"""
+        from app.ai.providers import DeepSeekProvider
+
+        provider = DeepSeekProvider()
+        messages = [ChatMessage(role="user", content="hi")]
+
+        off = provider._payload(messages, "m", 0.7, 100, False, thinking=False)
+        assert off["thinking"] == {"type": "disabled"}
+        assert "enable_thinking" not in off
+
+        on = provider._payload(messages, "m", 0.7, 100, False, thinking=True)
+        assert on["thinking"] == {"type": "enabled"}
+
+        # 不传就完全不带这个字段，跟随服务端默认
+        default = provider._payload(messages, "m", 0.7, 100, False)
+        assert "thinking" not in default
+
+    def test_reasoning_effort_only_when_specified(self):
+        from app.ai.providers import MiMoProvider
+
+        provider = MiMoProvider()
+        messages = [ChatMessage(role="user", content="hi")]
+
+        assert "reasoning_effort" not in provider._payload(messages, "m", 0.7, 100, False)
+        payload = provider._payload(messages, "m", 0.7, 100, False, reasoning_effort="low")
+        assert payload["reasoning_effort"] == "low"
+
+    def test_truncated_response_is_flagged(self):
+        """被截断必须能被上层识别——截断的 JSON 解析出来是 None，
+        如果当成正常结果落库，就会写入一条空白复盘。"""
+        from app.ai.base import AIResponse
+
+        assert AIResponse(text="", finish_reason="length").truncated is True
+        assert AIResponse(text="ok", finish_reason="stop").truncated is False
+
+    def test_truncated_empty_output_raises_instead_of_returning_blank(self):
+        """最隐蔽的失败模式：HTTP 200、无异常、content 为空。
+        必须显式报错，不能静默返回空串。"""
+        import asyncio
+
+        from app.ai.base import AIError
+        from app.ai.providers import MiMoProvider
+
+        provider = MiMoProvider()
+        provider.api_key = "fake-key-for-test"
+
+        class FakeResponse:
+            status_code = 200
+
+            @staticmethod
+            def json():
+                return {
+                    "choices": [
+                        {
+                            "finish_reason": "length",
+                            "message": {"content": "", "reasoning_content": "想了很久" * 50},
+                        }
+                    ],
+                    "usage": {"prompt_tokens": 10, "completion_tokens": 700},
+                }
+
+        class FakeClient:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                return False
+
+            async def post(self, *args, **kwargs):
+                return FakeResponse()
+
+        import app.ai.providers as providers_module
+
+        original = providers_module.httpx.AsyncClient
+        providers_module.httpx.AsyncClient = lambda *a, **kw: FakeClient()
+        try:
+            with pytest.raises(AIError, match="截断"):
+                asyncio.run(provider.complete([ChatMessage(role="user", content="x")]))
+        finally:
+            providers_module.httpx.AsyncClient = original
+
+
+class TestNoSilentMockFallback:
+    """真实模型失败时**不能**悄悄换成 Mock 内容。
+
+    否则超时那一刻，用户会拿到一段看起来很像真的模拟观察，
+    而它会被当作 AI 的真实判断写进弱点库——这个产品最不能脏的就是这份数据。
+    """
+
+    def test_complete_raises_instead_of_falling_back(self, monkeypatch):
+        import asyncio
+
+        from app.ai import router as router_module
+        from app.ai.base import AIError
+
+        class ExplodingProvider:
+            name = "exploding"
+            default_model = "x"
+            configured = True
+
+            async def complete(self, *a, **kw):
+                raise AIError("上游超时")
+
+            def stream(self, *a, **kw):
+                raise AIError("上游超时")
+
+        monkeypatch.setattr(router_module, "get_provider", lambda task: ExplodingProvider())
+
+        with pytest.raises(AIError):
+            asyncio.run(
+                router_module.complete(TASK_REVIEW_CARD, [ChatMessage(role="user", content="x")])
+            )
+
+    def test_stream_raises_instead_of_falling_back(self, monkeypatch):
+        from app.ai import router as router_module
+        from app.ai.base import AIError
+
+        class ExplodingProvider:
+            name = "exploding"
+            default_model = "x"
+            configured = True
+
+            def stream(self, *a, **kw):
+                raise AIError("上游超时")
+
+        monkeypatch.setattr(router_module, "get_provider", lambda task: ExplodingProvider())
+
+        with pytest.raises(AIError):
+            router_module.stream(TASK_DEBATE_REPLY, [ChatMessage(role="user", content="x")])
+
+    def test_mock_still_used_when_key_missing(self, monkeypatch):
+        """「没配 Key」是另一回事：那是明确的降级模式，
+        在选 Provider 阶段就决定，并且能从 /api/health 看到。"""
+        from app.ai import router as router_module
+
+        monkeypatch.setattr(router_module.settings, "AI_PROVIDER", "hybrid")
+        monkeypatch.setattr(router_module.settings, "DEEPSEEK_API_KEY", "")
+        monkeypatch.setattr(router_module.settings, "MIMO_API_KEY", "")
+        router_module.reset_providers()
+
+        assert router_module.get_provider(TASK_REVIEW_CARD).name == "mock"
+        assert router_module.provider_status()["degraded"] is True
+
+        router_module.reset_providers()
+
+
+class TestReviewGenerationHonesty:
+    """复盘生成失败时要报错，不能填通用鼓励语冒充 AI 观察。"""
+
+    def test_review_raises_when_json_unparseable(self, monkeypatch):
+        import asyncio
+
+        from app.ai import router as router_module
+        from app.ai.base import AIResponse
+        from app.services import debate as debate_service
+
+        async def fake_complete(*a, **kw):
+            return AIResponse(text="抱歉，我无法完成这个任务。", finish_reason="stop")
+
+        monkeypatch.setattr(debate_service, "complete", fake_complete)
+
+        class FakeRoom:
+            id = 1
+            user_id = 1
+            topic = "t"
+            stance = "s"
+
+        class FakeSession:
+            async def scalar(self, *a, **kw):
+                return None
+
+            def add(self, *a, **kw):
+                pass
+
+            async def flush(self):
+                pass
+
+            async def execute(self, *a, **kw):
+                class R:
+                    @staticmethod
+                    def scalars():
+                        class S:
+                            @staticmethod
+                            def all():
+                                return []
+
+                        return S()
+
+                return R()
+
+        with pytest.raises(debate_service.ReviewGenerationError):
+            asyncio.run(
+                debate_service.generate_review(
+                    FakeSession(), FakeRoom(), debate_service.DebateContext()
+                )
+            )
+
+    def test_missing_blocks_stay_empty_not_fabricated(self):
+        """结构性字段缺失时留空，不填放到谁身上都成立的废话。
+
+        注意断言的是**代码**而不是源码文本——注释里会引用被删掉的旧文案
+        （说明为什么删），拿字符串搜整个源码会把注释也算进去。
+        """
+        import ast
+        import inspect
+        import textwrap
+
+        from app.services import debate as debate_service
+
+        tree = ast.parse(textwrap.dedent(inspect.getsource(debate_service.generate_review)))
+
+        # 找出所有 _text(字段名, 默认值) 调用，确认默认值都是空串
+        defaults: dict[str, str] = {}
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id == "_text"
+                and len(node.args) == 2
+                and isinstance(node.args[0], ast.Constant)
+                and isinstance(node.args[1], ast.Constant)
+            ):
+                defaults[node.args[0].value] = node.args[1].value
+
+        assert defaults, "没有找到 _text(...) 调用，测试本身失效了"
+        for field in ("good", "notice", "next_time"):
+            assert field in defaults, f"{field} 应当有默认值"
+            assert defaults[field] == "", (
+                f"{field} 的默认值是 {defaults[field]!r}，应当留空——"
+                f"通用鼓励语会被用户误认为 AI 的真实观察"
+            )
+
+
+# ─────────────────────────────────────────────────────────────
+# 人格与上下文必须解耦（真实模型实测踩出来的坑）
+# ─────────────────────────────────────────────────────────────
+
+
+class TestPersonaIsolation:
+    """复盘调用曾经把辩论人格一起传过去，模型于是继续辩论，
+    返回一段辩词而不是复盘 JSON —— 复盘永远解析失败。
+
+    根因：build_stable_system() 里含「你是辩论对手」那段固定 Prompt，
+    而复盘需要的是**用户档案**，不是辩论人格。两者必须能分开取。
+    """
+
+    def test_context_blocks_exclude_debate_persona(self):
+        cards = [FakeCard(1, "被追问时防御性重复", domains=["work"])]
+        context = prompts.build_context_blocks(cards, [], FakeLoop(), cards[0])
+
+        # 用户档案必须在
+        assert "被追问时防御性重复" in context
+        assert "开会被追问进度" in context
+        # 辩论人格绝不能出现
+        assert "辩论对手" not in context
+        assert prompts.FIXED_SYSTEM_PROMPT not in context
+
+    def test_stable_system_includes_persona(self):
+        stable = prompts.build_stable_system([FakeCard(1, "甲")])
+        assert stable.startswith(prompts.FIXED_SYSTEM_PROMPT)
+        assert "辩论对手" in stable
+
+    def test_stable_system_is_persona_plus_context(self):
+        cards = [FakeCard(1, "甲", domains=["work"])]
+        assert prompts.build_stable_system(cards) == (
+            prompts.FIXED_SYSTEM_PROMPT + "\n\n" + prompts.build_context_blocks(cards)
+        )
+
+    def test_review_uses_single_system_message(self):
+        """两条 system 消息会让模型在「辩手」和「观察者」之间二选一。"""
+        context = prompts.build_context_blocks([FakeCard(1, "甲")])
+        messages = prompts.build_review_messages("辩题", "立场", "AI：x\n用户：y", context)
+
+        system_messages = [m for m in messages if m.role == "system"]
+        assert len(system_messages) == 1, "复盘只应有一条 system 消息"
+        assert "辩论对手" not in system_messages[0].content
+        assert "辩论观察者" in system_messages[0].content
+        # 用户档案被并入同一条
+        assert "甲" in system_messages[0].content
+
+
+class TestDebateHistoryNotDuplicated:
+    """history 从库里取的全量消息里**已经包含**用户刚发的那条，
+    build_debate_messages 还会追加 latest。不剔除就会连续发两遍同一句话，
+    模型会以为用户在强调，回答跑偏。
+    """
+
+    def test_stream_reply_drops_duplicate_latest(self, monkeypatch):
+        import asyncio
+
+        from app.services import debate as debate_service
+
+        captured: dict = {}
+
+        def fake_stream(task, messages, **kwargs):
+            captured["messages"] = messages
+
+            async def _empty():
+                if False:
+                    yield ""
+
+            return _empty()
+
+        import app.ai.router as router_module
+
+        monkeypatch.setattr(router_module, "stream", fake_stream)
+
+        class M:
+            def __init__(self, role, content, seq=0):
+                self.role, self.content, self.seq, self.round = role, content, seq, 0
+
+        history = [
+            M("ai", "我站对立面", 1),
+            M("user", "我觉得当场反驳是对的", 2),
+        ]
+        room = type("R", (), {"topic": "t", "stance": "s"})()
+
+        asyncio.run(_drain(debate_service.stream_reply(
+            room, debate_service.DebateContext(), history, "我觉得当场反驳是对的"
+        )))
+
+        contents = [m.content for m in captured["messages"]]
+        assert contents.count("我觉得当场反驳是对的") == 1, (
+            f"用户发言被重复发送了：{contents}"
+        )
+
+
+async def _drain(agen):
+    async for _ in agen:
+        pass

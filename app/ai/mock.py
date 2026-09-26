@@ -333,7 +333,9 @@ class MockProvider(BaseProvider):
 
     # ── 协议实现 ──────────────────────────────────────────
 
-    async def _complete_impl(self, messages, *, model, temperature, max_tokens) -> AIResponse:
+    async def _complete_impl(
+        self, messages, *, model, temperature, max_tokens, thinking=None, reasoning_effort=None
+    ) -> AIResponse:
         text = self._generate(messages)
         prompt_chars = sum(len(m.content) for m in messages)
         return AIResponse(
@@ -348,7 +350,9 @@ class MockProvider(BaseProvider):
             provider=self.name,
         )
 
-    async def _stream_impl(self, messages, *, model, temperature, max_tokens) -> AsyncIterator[str]:
+    async def _stream_impl(
+        self, messages, *, model, temperature, max_tokens, thinking=None, reasoning_effort=None
+    ) -> AsyncIterator[str]:
         text = self._generate(messages)
         for index in range(0, len(text), STREAM_CHUNK_SIZE):
             if self.stream_delay:

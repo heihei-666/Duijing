@@ -121,24 +121,46 @@ def render_loop_block(loop, weakness) -> str:
     return "\n".join(lines)
 
 
+def build_context_blocks(
+    weaknesses: Sequence = (),
+    advantages: Sequence = (),
+    loop=None,
+    weakness=None,
+) -> str:
+    """只拼「用户档案」部分：弱点库 + 优势库 + 回环，**不含辩论人格**。
+
+    为什么必须能单独拿出来：复盘卡片需要知道用户的弱点与优势才能给出有针对性的
+    观察，但它**不是辩论**。曾经把 build_stable_system() 的整体（含
+    「你是辩论对手」那段人格设定）直接传给复盘，结果模型收到两个互相冲突的
+    system 消息，选择继续辩论——返回的是一段辩词，复盘 JSON 自然解析不出来。
+    人格与上下文分开，各任务只取自己要的那部分。
+    """
+    return "\n\n".join(
+        [
+            render_weakness_summary(weaknesses),
+            render_advantage_summary(advantages),
+            render_loop_block(loop, weakness),
+        ]
+    )
+
+
 def build_stable_system(
     weaknesses: Sequence = (),
     advantages: Sequence = (),
     loop=None,
     weakness=None,
 ) -> str:
-    """拼接缓存前缀。
+    """拼接辩论房的缓存前缀。
 
     顺序固定：固定 Prompt → 弱点库 → 优势库 → 回环。
     返回的字符串在同一场辩论内必须逐字节一致。
+
+    **只给辩论房用**。非辩论任务请用 build_context_blocks()，
+    否则会把辩论人格带过去。
     """
-    blocks = [
-        FIXED_SYSTEM_PROMPT,
-        render_weakness_summary(weaknesses),
-        render_advantage_summary(advantages),
-        render_loop_block(loop, weakness),
-    ]
-    return "\n\n".join(blocks)
+    return "\n\n".join(
+        [FIXED_SYSTEM_PROMPT, build_context_blocks(weaknesses, advantages, loop, weakness)]
+    )
 
 
 # ─────────────────────────────────────────────────────────────
@@ -221,13 +243,16 @@ def build_review_messages(
     topic: str,
     stance: str,
     transcript: str,
-    stable_system: str = "",
+    context_blocks: str = "",
     *,
     level: str = "novice",
 ) -> list[ChatMessage]:
     """复盘卡片生成。
 
     严格限流：每场最多 1 条优势观察 + 1 条弱点观察 + 1 条替代动作。
+
+    第二个位置参数是**用户档案上下文**（build_context_blocks 的产物），
+    不是 build_stable_system 的产物——后者含辩论人格，会让模型继续辩论。
     """
     system = (
         "你是「对镜」的辩论观察者。基于整场辩论记录输出复盘卡片。"
@@ -249,12 +274,15 @@ def build_review_messages(
         f"【辩题】{topic}\n【用户立场】{stance or '未声明'}\n"
         f"【对手风格】{_level_cn(level)}\n\n【辩论记录】\n{transcript}"
     )
-    messages = [ChatMessage(role="system", content=system)]
-    if stable_system:
-        # 复用同一份弱点/优势摘要，保持与辩论阶段一致的前缀
-        messages.insert(0, ChatMessage(role="system", content=stable_system))
-    messages.append(ChatMessage(role="user", content=user))
-    return messages
+    # 把用户档案并进同一条 system，而不是再插一条 system——
+    # 两条 system 消息会让模型在「辩论对手」和「观察者」之间二选一。
+    if context_blocks:
+        system = f"{system}\n\n【用户档案】以下是这位用户已知的弱点与优势，供你判断时参考：\n{context_blocks}"
+
+    return [
+        ChatMessage(role="system", content=system),
+        ChatMessage(role="user", content=user),
+    ]
 
 
 def build_event_scan_messages(cards_text: str, weaknesses: Sequence = ()) -> list[ChatMessage]:

@@ -102,7 +102,9 @@ class Settings:
     MIMO_BASE_URL: str = os.getenv("MIMO_BASE_URL", "https://api.xiaomimimo.com/v1").rstrip("/")
     MIMO_MODEL: str = os.getenv("MIMO_MODEL", "mimo-v2.6-flash")
 
-    AI_TIMEOUT_SECONDS: int = _int("AI_TIMEOUT_SECONDS", 120)
+    # 思考模式下的辩论回复实测 3-5 秒，但网络抖动或长复盘可能超过 1 分钟。
+    # 实测在弱网容器里出现过一次 >120s 的读取超时，这里放宽到 180。
+    AI_TIMEOUT_SECONDS: int = _int("AI_TIMEOUT_SECONDS", 180)
     AI_MAX_RETRIES: int = _int("AI_MAX_RETRIES", 2)
 
     # ── 限流 ──────────────────────────────────────────────

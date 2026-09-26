@@ -41,6 +41,15 @@ TASK_PRINCIPLE = "principle_extract"
 REASONING_TASKS = frozenset({TASK_DEBATE_REPLY})
 # 其余一律走 MiMo
 
+# 哪些任务保留思考模式。
+#
+# 只有辩论房需要：它是实时对抗，论证质量直接决定产品价值。
+# 其余任务都是「结构化短输出」（输出 JSON 或一两句话），
+# 而两个模型都默认开思考、effort=high，推理 token 与正式输出**共用** max_tokens 预算——
+# 实测给复盘卡片设 700 token，推理把预算吃光后 content 返回空串，
+# 复盘卡片变成空白却不报错。关掉思考既避免这个坑，也省下推理部分的输出费用。
+THINKING_TASKS = frozenset({TASK_DEBATE_REPLY})
+
 _deepseek: DeepSeekProvider | None = None
 _mimo: MiMoProvider | None = None
 _mock: MockProvider | None = None
@@ -110,31 +119,31 @@ def _fallback(reason: str) -> AIProvider:
 
 async def complete(task: str, messages: list[ChatMessage], **kwargs) -> AIResponse:
     provider = get_provider(task)
-    try:
-        return await provider.complete(messages, **kwargs)
-    except AIError:
-        if provider.name != "mock":
-            logger.exception("AI 调用失败，本次降级为 Mock")
-            return await _get_mock().complete(messages, **kwargs)
-        raise
+    # 调用方没显式指定时，按任务性质决定是否开思考
+    kwargs.setdefault("thinking", task in THINKING_TASKS)
+
+    # 这里**刻意不做 Mock 兜底**。
+    #
+    # 曾经的写法是「真实模型失败就悄悄换成 Mock」，看起来更「健壮」，实际很危险：
+    # 超时或报错时用户会拿到一段**看起来很像真的**模拟观察，
+    # 而它会被当成 AI 的真实判断写进弱点库——这个产品最不能脏的就是这份数据。
+    # 宁可显式失败让用户重试，也不要产生看似正常的假数据。
+    #
+    # 「没配 Key」是另一回事：那属于明确的降级模式，在选 Provider 时就决定了，
+    # 并且可以通过 GET /api/health 的 ai.degraded 看到。
+    return await provider.complete(messages, **kwargs)
 
 
 def stream(task: str, messages: list[ChatMessage], **kwargs):
-    """返回异步生成器。真实模型失败时降级为 Mock 流。"""
+    """返回异步生成器。
+
+    与 complete 同理：真实模型失败时直接向上抛，
+    让 SSE 端点发出 error 事件、前端提示重试，
+    而不是把 Mock 生成的辩词当成 AI 的真实回应接着往下辩。
+    """
     provider = get_provider(task)
-
-    async def _gen():
-        try:
-            async for piece in provider.stream(messages, **kwargs):
-                yield piece
-        except AIError:
-            if provider.name == "mock":
-                raise
-            logger.exception("AI 流式调用失败，降级为 Mock")
-            async for piece in _get_mock().stream(messages, **kwargs):
-                yield piece
-
-    return _gen()
+    kwargs.setdefault("thinking", task in THINKING_TASKS)
+    return provider.stream(messages, **kwargs)
 
 
 # ─────────────────────────────────────────────────────────────
@@ -214,6 +223,7 @@ def provider_status() -> dict:
 
 
 __all__ = [
+    "THINKING_TASKS",
     "AIError",
     "AIProvider",
     "AIResponse",

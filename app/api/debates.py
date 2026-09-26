@@ -436,7 +436,19 @@ async def stream_reply(
                     buffer.append(piece)
                     yield _sse("token", {"delta": piece})
 
-                text = "".join(buffer).strip() or "（这一轮我没有更多要说的。）"
+                text = "".join(buffer).strip()
+                if not text:
+                    # 上游偶发「HTTP 200 但流是空的」（实测遇到过一次）。
+                    # 这里**不能**填一句兜底台词存进去——那会让用户以为 AI 真的
+                    # 这么回应了，而辩论文本是复盘和 AI 观察的唯一依据，
+                    # 造假会一路污染到弱点库。宁可显式失败，让用户重试。
+                    logger.error(
+                        "AI 流式输出为空 room=%s round=%s provider=%s",
+                        room_id, last_user.round, getattr(context, "_provider", "?"),
+                    )
+                    yield _sse("error", {"detail": "AI 这次没有返回内容，请重试"})
+                    return
+
                 ai_message = await debate_service.append_message(
                     s, room, role="ai", content=text, round_no=last_user.round
                 )
@@ -485,9 +497,16 @@ async def finish_debate(
         session, user.id, weakness_id=room.weakness_id, loop_id=room.loop_id
     )
 
-    review, created = await debate_service.generate_review(
-        session, room, context, level=profile.level
-    )
+    try:
+        review, created = await debate_service.generate_review(
+            session, room, context, level=profile.level
+        )
+    except debate_service.ReviewGenerationError as exc:
+        # 502 而不是 500：这是上游 AI 返回了不可用的内容，
+        # 不是本服务出错，也不该让用户以为「辩论数据丢了」——
+        # 房间和消息都还在，重试一次即可。
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
     await debate_service.finish_room(session, room)
 
     # 辩论房结论 → 原则候选（置信度：中）
