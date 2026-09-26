@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 
@@ -41,12 +41,16 @@ import { useAuthStore } from '@/store/auth';
  *   2. 立刻 new EventSource(GET /api/debates/{id}/stream?after_seq=…)  → AI 回复
  *   3. token 事件逐字追加到临时气泡（关键体验，不攒到最后整段显示）
  *   4. message 事件用服务端完整消息替换临时气泡
- *   5. done 事件关闭连接；is_last_round 为真时提示可以结束了
+ *   5. done 事件关闭连接；辩满计划轮数后底部常驻收尾提示（带可点的「结束并复盘」）
  *   6. error 事件显示错误并允许重试
  *   7. 卸载 / 换房间关闭连接（在 useDebateStream 里统一兜住）
  *
  * 进入页面先 GET 详情：room + messages（+ 发起人可见的 review）。
  * 如果最后一条是用户消息且房间还 active，说明上次生成中途断线，这里自动续接一次流。
+ *
+ * 「该收尾了」这件事由**房间状态推导**（见 wrapUpNotice），不靠 SSE 事件临时弹一下：
+ * 那条提示以前只在 done 事件里 setNotice，用户一刷新就没了，而按钮又远在消息列表顶部，
+ * 结果就是「提示说可以结束，但找不到能点的地方」。
  */
 export default function DebateRoomPage() {
   const params = useParams<{ id: string }>();
@@ -114,9 +118,8 @@ export default function DebateRoomPage() {
     setRoom((previous) =>
       previous ? { ...previous, current_round: Math.max(previous.current_round, info.round) } : previous,
     );
-    if (info.is_last_round) {
-      setNotice('这已经是最后一轮。可以点「结束并复盘」，也可以继续辩。');
-    }
+    // 这里刻意不再 setNotice：辩满计划轮数后的收尾提示由 wrapUpNotice 常驻渲染，
+    // 否则每多辩一轮就重复弹一次「这已经是最后一轮」，辩到第 8 轮会弹 5 次。
   }, []);
 
   const {
@@ -278,7 +281,8 @@ export default function DebateRoomPage() {
       setRoom((previous) => (previous ? { ...previous, status: result.status } : previous));
       if (result.status === 'paused') {
         closeStream();
-        setNotice('已暂停。数据都留着，回来点「继续」。');
+        // 提示与「继续」按钮都由 composerNotice 从房间状态推导，
+        // 这样刷新后不会只剩一句「点上方继续」而上面什么都没有。
       } else {
         setNotice(null);
       }
@@ -343,6 +347,71 @@ export default function DebateRoomPage() {
     const lastUser = [...messages].reverse().find((item) => item.role === 'user');
     startStream(lastUser?.seq);
   }, [messages, startStream]);
+
+  /* ------------------------------- 底部提示（含就地操作，由房间状态推导） */
+
+  /**
+   * 底部（输入区上方）的提示，以及提示**自带的**操作按钮。
+   *
+   * 为什么要有这个：房间操作行（暂停 / 邀请 / 结束并复盘）在消息列表顶部，
+   * 是刻意不吸顶的（见 RoomActions 注释，为了不让按钮一进房间就占掉半屏）。
+   * 但「上面」在辩到第 8 轮时已经是好几屏之外了——提示里写「可以点结束并复盘」，
+   * 用户低头找一圈什么也点不到。所以凡是提示里提到某个动作，动作就落在提示这一行。
+   *
+   * 另一条同样重要：这些提示全部由**房间状态推导**，不靠事件临时 setNotice。
+   * 靠事件的话，用户一刷新页面提示就没了，又变回一个找不到出口的死胡同。
+   *
+   * max_rounds 是计划轮数不是硬上限（辩满了仍可继续），所以辩超了如实报多出来几轮。
+   */
+  const composerNotice = useMemo(() => {
+    if (!room) return null;
+
+    if (room.status === 'paused') {
+      return {
+        text: '已暂停。数据都留着，想接着辩就点「继续」。',
+        action: {
+          label: '继续',
+          onClick: () => void handleTogglePause(),
+          loading: togglingPause,
+        },
+      };
+    }
+
+    // 流式回复中不提前喊收尾：这一轮还没说完，这时按下按钮会掐断它
+    if (
+      room.status === 'active' &&
+      room.is_owner &&
+      !streaming &&
+      room.current_round >= room.max_rounds
+    ) {
+      const over = room.current_round - room.max_rounds;
+      return {
+        text:
+          over > 0
+            ? `已经辩了 ${room.current_round} 轮，比计划的 ${room.max_rounds} 轮多 ${over} 轮。想收尾就生成复盘，也可以接着辩。`
+            : `计划的 ${room.max_rounds} 轮辩完了。想收尾就生成复盘，也可以接着辩。`,
+        action: {
+          label: review ? '重新生成复盘' : '结束并复盘',
+          onClick: () => void handleFinish(),
+          loading: finishing,
+        },
+      };
+    }
+
+    // 兜底：房间已结束但复盘没落库（正常路径不出现，生成失败时房间仍是 active）
+    if (room.status === 'finished' && room.is_owner && !review) {
+      return {
+        text: '这场辩论还没有复盘卡片。',
+        action: {
+          label: '结束并复盘',
+          onClick: () => void handleFinish(),
+          loading: finishing,
+        },
+      };
+    }
+
+    return null;
+  }, [room, review, streaming, finishing, togglingPause, handleFinish, handleTogglePause]);
 
   /* ------------------------------------------------------------ 提醒相关操作 */
 
@@ -505,11 +574,9 @@ export default function DebateRoomPage() {
             </div>
           ) : null}
 
-          {room.status === 'finished' && !review && room.is_owner ? (
-            <p className="mt-5 rounded-xl bg-elevated px-3 py-2 text-xs leading-relaxed text-secondary">
-              还没有复盘卡片。点上面的「结束并复盘」生成一份。
-            </p>
-          ) : null}
+          {/* 「还没有复盘卡片」不再在这里写一句话指向上方的按钮——
+              那句话指向的按钮在消息列表顶部，辩到第 8 轮时已经在好几屏之外。
+              现在由 DebateComposer 的 noticeAction 就地给出可点的按钮。 */}
 
           <div ref={bottomRef} aria-hidden className="h-px" />
         </main>
@@ -526,7 +593,8 @@ export default function DebateRoomPage() {
           onAbandon={() => void handleAbandon()}
           abandoning={abandoning}
           error={actionError}
-          notice={notice}
+          notice={notice ?? composerNotice?.text ?? null}
+          noticeAction={notice ? null : (composerNotice?.action ?? null)}
         />
       </div>
 

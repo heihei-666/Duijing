@@ -8,10 +8,22 @@ interface RoomHeaderProps {
   onBack: () => void;
 }
 
-/** 轮次指示（配色方案 五：--text-tertiary） */
+/**
+ * 轮次指示（配色方案 五：--text-tertiary）。
+ *
+ * max_rounds 是**计划**轮数，不是硬上限：辩到计划轮数后用户仍可以接着辩。
+ * 所以辩超了必须如实写「第 8 轮 / 计划 4 轮」，不能写成「第 8 轮 / 共 4 轮」——
+ * 那会让人以为自己看错了，或者以为轮次计数坏了。
+ * 结束后同理，报实际辩了几轮，而不是当初计划的几轮。
+ */
 function roundLabel(room: DebateRoom): string {
-  if (room.status === 'finished') return `已结束 · 共 ${room.max_rounds} 轮`;
-  if (room.current_round <= 0) return `开场 · 共 ${room.max_rounds} 轮`;
+  if (room.status === 'finished') {
+    return room.current_round > 0 ? `已结束 · 共 ${room.current_round} 轮` : '已结束 · 未开辩';
+  }
+  if (room.current_round <= 0) return `开场 · 计划 ${room.max_rounds} 轮`;
+  if (room.current_round > room.max_rounds) {
+    return `第 ${room.current_round} 轮 / 计划 ${room.max_rounds} 轮`;
+  }
   return `第 ${room.current_round} 轮 / 共 ${room.max_rounds} 轮`;
 }
 

@@ -24,6 +24,19 @@ interface DebateComposerProps {
   error: string | null;
   /** 系统提示（最后一轮、已暂停、已结束） */
   notice: string | null;
+  /**
+   * 提示里带的内联操作。
+   *
+   * 为什么必须有它：房间操作行（暂停 / 邀请 / 结束并复盘）在消息列表**顶部**，
+   * 是刻意不吸顶的（见 RoomActions 注释）。但一句话把人指到屏幕外好几屏的按钮上，
+   * 等于没有按钮——用户辩到第 8 轮时停在底部，只会看到「可以点结束并复盘」却点不到。
+   * 所以凡是「提示里提到某个动作」的，都在提示自己这一行给出这个动作。
+   */
+  noticeAction?: {
+    label: string;
+    onClick: () => void;
+    loading?: boolean;
+  } | null;
 }
 
 /**
@@ -44,6 +57,7 @@ export function DebateComposer({
   abandoning,
   error,
   notice,
+  noticeAction,
 }: DebateComposerProps) {
   const [confirmAbandon, setConfirmAbandon] = useState(false);
 
@@ -56,7 +70,8 @@ export function DebateComposer({
   const disabledReason = finished
     ? '这场辩论已经结束，输入已关闭。'
     : paused
-      ? '已暂停。点上方「继续」后可以接着发言。'
+      ? // 不再写「点上方继续」：「继续」按钮现在就在上面的提示条里
+        '已暂停，先接着辩才能发言。'
       : streaming
         ? 'AI 正在回应，等它说完这一轮。'
         : overLimit
@@ -79,9 +94,19 @@ export function DebateComposer({
 
       {error ? <p className="mb-2 text-xs text-danger">{error}</p> : null}
       {notice ? (
-        <p className="mb-2 rounded-xl bg-info-light px-3 py-2 text-xs leading-relaxed text-info">
-          {notice}
-        </p>
+        <div className="mb-2 flex items-center justify-between gap-3 rounded-xl bg-info-light px-3 py-2">
+          <p className="text-xs leading-relaxed text-info">{notice}</p>
+          {noticeAction ? (
+            <Button
+              variant="outline"
+              className="shrink-0"
+              loading={noticeAction.loading}
+              onClick={noticeAction.onClick}
+            >
+              {noticeAction.label}
+            </Button>
+          ) : null}
+        </div>
       ) : null}
 
       <label className="sr-only" htmlFor="debate-composer">
