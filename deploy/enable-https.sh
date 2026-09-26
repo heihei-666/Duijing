@@ -102,10 +102,39 @@ certbot "${CERTBOT_ARGS[@]}"
 # ─────────────────────────────────────────────────────────────
 log "切换到 HTTPS 配置"
 mkdir -p /var/www/certbot
+# 先把当前可用配置留存一份，nginx -t 失败时可以回滚
+[ -f /etc/nginx/sites-available/duijing ] && cp /etc/nginx/sites-available/duijing /etc/nginx/sites-available/duijing.http-only
+
 sed "s/your-domain\.com/$DOMAIN/g" "$APP_DIR/deploy/nginx.conf" > /etc/nginx/sites-available/duijing
+
+# ── http2 指令的版本兼容 ──
+#
+# nginx 1.25.1 起 `http2` 是独立指令（http2 on;）；
+# 更早的版本（Ubuntu 22.04 的 1.18、24.04 的 1.24）只能写成
+# `listen 443 ssl http2;`，直接写 `http2 on;` 会报
+# "unknown directive http2" 导致 nginx -t 失败。
+#
+# 实测就踩到了这个：证书签发成功，但配置切换失败。
+NGINX_VER="$(nginx -v 2>&1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
+if [ "$(printf '%s\n1.25.1\n' "$NGINX_VER" | sort -V | head -1)" = "1.25.1" ]; then
+  log "nginx $NGINX_VER 支持独立的 http2 指令，保持模板原样"
+else
+  log "nginx $NGINX_VER 较旧，http2 改写进 listen 指令"
+  sed -i 's|^\(\s*\)listen 443 ssl;|\1listen 443 ssl http2;|' /etc/nginx/sites-available/duijing
+  sed -i 's|^\(\s*\)listen \[::\]:443 ssl;|\1listen [::]:443 ssl http2;|' /etc/nginx/sites-available/duijing
+  sed -i '/^\s*http2 on;\s*$/d' /etc/nginx/sites-available/duijing
+fi
 ln -sf /etc/nginx/sites-available/duijing /etc/nginx/sites-enabled/duijing
 rm -f /etc/nginx/sites-enabled/default
-nginx -t
+
+# nginx -t 失败时**必须回滚**：坏配置留在磁盘上，
+# 一旦 nginx 重启（哪怕只是服务器重启）就再也起不来了。
+if ! nginx -t; then
+  rm -f /etc/nginx/sites-enabled/duijing
+  ln -sf /etc/nginx/sites-available/duijing.http-only /etc/nginx/sites-enabled/duijing 2>/dev/null || true
+  nginx -t && systemctl reload nginx || true
+  die "Nginx 配置测试失败，已回滚到上一份配置。证书本身已签发成功，修好配置后重跑本脚本即可。"
+fi
 systemctl reload nginx
 
 # ─────────────────────────────────────────────────────────────
