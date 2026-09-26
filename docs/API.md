@@ -60,7 +60,11 @@
   "id": 12, "name": "被追问时防御性重复", "description": "...",
   "domains": ["work", "expression"], "status": "observing",
   "confidence": 3, "source": "ai", "source_id": 8,
-  "trigger_count_30d": 6, "hold_count_30d": 4, "hold_rate_30d": 67,
+  "trigger_count_30d": 6, "hold_count_30d": 4,
+  "hold_rate_30d": 67,          // null = 还没有触发记录，不是 0%
+  "hold_rate_7d": 80,           // 本周；null = 本周无数据
+  "hold_rate_prev_7d": 50,      // 上周；null = 上周无数据
+  "trend_delta": 30,            // 本周 - 上周；任一为 null 时本字段为 null
   "plan_count": 1, "drill_count": 3,
   "days_since_created": 12, "created_at": "...", "archived_at": null,
   "delete_after": null
@@ -604,3 +608,74 @@ https://your-domain.com/debate/join/{invite_token}
 > 改动其中一侧时务必同步另一侧。
 
 被邀请者需要登录：未登录时先跳登录页，登录后自动回到该地址继续加入。
+
+
+---
+
+## 15. 冷启动迭代（v1.2）
+
+### 15.1 `hold_rate` 为 `null` 的含义（重要）
+
+**`hold_rate_30d` / `hold_rate_7d` / `hold_rate_prev_7d` 都可能是 `null`。**
+
+| 值 | 含义 | 前端应显示 |
+|---|---|---|
+| `null` | **还没有触发记录**（新回环，或只记过「未触发」） | `--` 或「还没有记录」，中性色 |
+| `0` | 真的每次都破功 | `0%`，砖红 `--rate-low` |
+
+**这两者绝不能渲染成同一个东西。** 刚建好回环、一次都没练过的用户
+看到「0%」，会以为自己一直在失败。
+
+配套字段：`trigger_count_30d`（= 0 时说明无数据）、`hold_rate_prev_7d`。
+「未触发」的记录不进分母，所以只记过「未触发」时仍然算无数据。
+
+### 15.2 趋势字段
+
+`trend_delta = hold_rate_7d - hold_rate_prev_7d`，**任一周为 `null` 时本字段为 `null`**，
+此时前端**不显示**趋势——显示「↑ 0%」会制造「在原地踏步」的错觉。
+
+### 15.3 预约辩论提醒与推送
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/api/push/config` | `{ available, public_key, presets:[{key,label}] }`（无需登录） |
+| GET | `/api/push/status` | `{ available, subscribed, device_count }` |
+| POST | `/api/push/subscribe` | `{ endpoint, keys:{p256dh,auth} }` |
+| POST | `/api/push/unsubscribe` | `{ endpoint }` |
+| POST | `/api/push/test` | 给自己发一条测试推送；无设备时 409 |
+| GET | `/api/debates/{id}/reminder` | 读取当前预约 |
+| POST | `/api/debates/{id}/reminder` | `{ preset }` 或 `{ remind_at }`，可选 `note` |
+| DELETE | `/api/debates/{id}/reminder` | 取消预约 |
+
+**预设**（推荐用预设，让用户在手机上挑日期时间是给「预约」增加摩擦）：
+
+| key | 含义 |
+|---|---|
+| `in_30min` | 30 分钟后 |
+| `in_1h` | 1 小时后 |
+| `tonight_8` | 今晚 20:00（已过则顺延到明天） |
+| `tomorrow_8` | 明晚 20:00 |
+| `tomorrow_9am` | 明天 09:00 |
+
+`POST` 响应：`{ reminder, device_count, will_notify }`。
+
+> **`will_notify=false` 时前端必须明确提示**（例如「已记下，但还没开启通知」）。
+> 让用户以为约好了却收不到，比不支持推送更糟。
+
+限制：提醒时间必须晚于现在、且不超过 30 天。同一场辩论只保留一条待发提醒。
+
+**推送 payload**：`{ title, body, url, tag, renotify }`。
+Service Worker 通过 `push` 事件接收，`notificationclick` 打开 `url`。
+
+### 15.4 账号数据
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/api/account/export` | 导出全部数据为 JSON（带 `Content-Disposition`） |
+| GET | `/api/account/deletion` | `{ requested, requested_at }` |
+| POST | `/api/account/deletion` | 提交注销申请 |
+| DELETE | `/api/account/deletion` | 撤销申请 |
+
+> 导出**不包含** `password_hash`。
+> 注销是**申请标记 + 人工确认**，不是即时物理删除；申请期间账号仍可正常使用，
+> 但推送订阅会被撤销。
