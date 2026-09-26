@@ -87,6 +87,9 @@ mkdir -p "$WEB_ROOT" /var/backups/duijing
 STASHED_ENV=""
 if [ -d "$APP_DIR/.git" ]; then
   log "更新已有代码"
+  # 仓库若由别的用户克隆（比如运维手工预置），git 会以
+  # "detected dubious ownership" 拒绝操作。先给应用用户放行该目录。
+  sudo -u "$APP_USER" git config --global --add safe.directory "$APP_DIR" 2>/dev/null || true
   # 用 reset --hard 而不是 pull：服务器上不该有本地改动，
   # 一旦有人手工改过代码，pull 会冲突并把后续更新全部卡死。
   sudo -u "$APP_USER" git -C "$APP_DIR" fetch --quiet origin
@@ -225,7 +228,8 @@ systemctl is-active --quiet duijing \
 # ─────────────────────────────────────────────────────────────
 log "配置 Nginx"
 if [ -n "$DOMAIN" ]; then
-  SERVER_NAME="$DOMAIN"
+  # 裸域与 www 都要匹配，否则用户输 www.duijing.xyz 会落到默认站点
+  SERVER_NAME="$DOMAIN www.$DOMAIN"
 else
   SERVER_NAME="_"   # 无域名：接受任意 Host，便于用 IP 访问
 fi

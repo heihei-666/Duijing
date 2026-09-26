@@ -30,6 +30,7 @@ die()  { printf '\033[1;31m[✗]\033[0m %s\n' "$*" >&2; exit 1; }
 # ─────────────────────────────────────────────────────────────
 log "检查域名解析"
 RESOLVED="$(getent hosts "$DOMAIN" | awk '{print $1}' | head -1 || true)"
+WWW_RESOLVED="$(getent hosts "www.$DOMAIN" | awk '{print $1}' | head -1 || true)"
 PUBLIC_IP="$(curl -s --max-time 8 https://api.ipify.org || true)"
 if [ -z "$RESOLVED" ]; then
   die "$DOMAIN 解析不到任何 IP。请先在 DNS 添加 A 记录指向 $PUBLIC_IP"
@@ -38,6 +39,10 @@ if [ "$RESOLVED" != "$PUBLIC_IP" ]; then
   die "$DOMAIN 解析到 $RESOLVED，但本机公网 IP 是 $PUBLIC_IP。解析尚未生效或指错了机器"
 fi
 log "解析正确：$DOMAIN → $RESOLVED"
+if [ -z "$WWW_RESOLVED" ]; then
+  die "www.$DOMAIN 解析不到 IP。请补一条 A 记录指向 $PUBLIC_IP，或去掉本脚本里的 -d www.$DOMAIN"
+fi
+log "解析正确：www.$DOMAIN → $WWW_RESOLVED"
 
 if ! curl -sf -o /dev/null --max-time 8 "http://$DOMAIN/.well-known/acme-challenge/" 2>/dev/null; then
   log "提示：80 端口暂时无法从公网访问（备案未通过时是正常的）。certbot 会尝试校验，失败请等备案完成后再跑。"
@@ -51,7 +56,8 @@ export DEBIAN_FRONTEND=noninteractive
 apt-get install -y -qq certbot python3-certbot-nginx >/dev/null
 
 log "申请证书（Let's Encrypt）"
-CERTBOT_ARGS=(--nginx -d "$DOMAIN" --non-interactive --agree-tos --redirect --keep-until-expiring)
+# 裸域与 www 一起签，否则访问 www.duijing.xyz 会报证书域名不匹配
+CERTBOT_ARGS=(--nginx -d "$DOMAIN" -d "www.$DOMAIN" --non-interactive --agree-tos --redirect --keep-until-expiring)
 if [ -n "$CERTBOT_EMAIL" ]; then
   CERTBOT_ARGS+=(-m "$CERTBOT_EMAIL")
 else
@@ -103,6 +109,9 @@ log "验证 HTTPS"
 sleep 1
 CODE="$(curl -s -o /dev/null -w '%{http_code}' "https://$DOMAIN/api/health" || echo 000)"
 [ "$CODE" = "200" ] || die "https://$DOMAIN/api/health 返回 $CODE"
+
+WWW_CODE="$(curl -s -o /dev/null -w '%{http_code}' "https://www.$DOMAIN/api/health" || echo 000)"
+[ "$WWW_CODE" = "200" ] || die "https://www.$DOMAIN/api/health 返回 $WWW_CODE（证书或 server_name 没覆盖 www）"
 
 echo
 printf '\033[1;32m═══ HTTPS 已启用 ═══\033[0m\n'
