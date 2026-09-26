@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="对镜">
+  <rect width="512" height="512" rx="112" fill="#4A6FA5" />
+  <text
+    x="256"
+    y="272"
+    text-anchor="middle"
+    dominant-baseline="middle"
+    font-family="-apple-system, 'PingFang SC', 'Noto Sans CJK SC', 'Microsoft YaHei', sans-serif"
+    font-size="264"
+    font-weight="500"
+    fill="#FFFFFF"
+  >镜</text>
+</svg>

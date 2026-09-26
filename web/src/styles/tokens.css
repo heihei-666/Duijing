@@ -1,0 +1,68 @@
+/* ==========================================================================
+   对镜 · 设计令牌
+   来源：《配色方案 v1.0》第十章「CSS 变量」—— 以下变量逐字采用，请勿改动色值。
+   改名 / 增删请先改配色方案文档，再改这里。
+   基调：低饱和暖灰底 + 克制点缀色。像一本有质感的笔记本，不像 RPG。
+   ========================================================================== */
+
+:root {
+  /* 中性 */
+  --bg-base: #F7F6F3;
+  --bg-surface: #FFFFFF;
+  --bg-elevated: #F0EEE9;
+  --bg-inset: #E8E5DF;
+  --border-light: #E5E2DB;
+  --border-strong: #D4D0C7;
+  --text-primary: #2C2A26;
+  --text-secondary: #6B6760;
+  --text-tertiary: #9C9790;
+  --text-disabled: #C4C0B8;
+
+  /* 主色 */
+  --primary: #4A6FA5;
+  --primary-hover: #3D5D8A;
+  --primary-light: #E8EEF7;
+
+  /* 功能 */
+  --success: #5B8C6B;
+  --success-light: #EAF2EC;
+  --warning: #C4944A;
+  --warning-light: #F7F0E4;
+  --danger: #B85C5C;
+  --danger-light: #F7EAEA;
+  --info: #5A7FA8;
+  --info-light: #EAF0F6;
+
+  /* 弱点便签 */
+  --sticky-ai-bg: #EEF2F7;
+  --sticky-ai-border: #C5D3E3;
+  --sticky-ai-text: #4A6FA5;
+  --sticky-observing-bg: #FBF6E8;
+  --sticky-observing-border: #E8DCC0;
+  --sticky-observing-text: #8A7A5C;
+  --sticky-improving-bg: #FFFFFF;
+  --sticky-improving-border: #D4D0C7;
+  --sticky-improving-text: #2C2A26;
+  --sticky-archived-bg: #F0EEE9;
+  --sticky-archived-border: #E5E2DB;
+  --sticky-archived-text: #9C9790;
+
+  /* 撑住率 */
+  --rate-low: #B85C5C;
+  --rate-mid: #C4944A;
+  --rate-good: #5B8C6B;
+  --rate-great: #4A8C5C;
+}
+
+/* --------------------------------------------------------------------------
+   以下为第十章未列出、但第二章色板/第三章便签里出现过的补充令牌。
+   单独成块，避免与上面「逐字采用」的部分混淆。
+   -------------------------------------------------------------------------- */
+:root {
+  /* 主色上的文字（配色方案 二·主色） */
+  --primary-text: #FFFFFF;
+  /* AI 观察便签右上角图标（配色方案 三·AI 观察候选） */
+  --sticky-ai-icon: #5A7FA8;
+  /* 「观察中」便签歪贴角度（配色方案 三·观察中） */
+  --sticky-observing-rotate: -1.5deg;
+}

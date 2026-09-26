@@ -176,3 +176,64 @@ cd web && npm install && npm run dev     # http://localhost:5173
 - Phase 6：阿里云实际部署（配置已就绪，见 `deploy/DEPLOY.md`）
 - 深色模式（方案明确标 P1 后置）
 - 真实 AI 联调（当前为 Mock，填入 Key 并设 `AI_PROVIDER=hybrid` 即可切换）
+
+---
+
+## 八、已知问题与后续待办
+
+### 8.1 前端类型声明仍不完整（不阻塞运行，但会误导后续开发）
+
+`src/api/types.ts` 已修正 25 处主要错误，但仍有以下**次级不符**未处理。
+它们当前**不影响运行**——`features/debate/api.ts`、`features/weakness/api.ts`、
+`features/assets/api.ts` 三个适配层绕过了 `client.ts` 的类型化方法，
+直接走 `apiRequest` 并自带正确类型。但**新写的代码若直接使用 `client.ts`，会被这些类型误导**。
+
+| # | 位置 | 问题 |
+|---|---|---|
+| 1 | `weaknessApi.get` | 声明 `WeaknessCard & {loops}`，实为 `{weakness, loops, suggest_downgrade, suggest_archive}` |
+| 2 | `eventCardApi.analyze` | 声明含 `updated_cards`，该字段不存在；实为 `cards_analyzed` / `pending_confirm` |
+| 3 | `WeaknessCard` | `loop_count` 是幽灵字段（后端从不返回）；缺 `drill_count`、`days_until_delete` |
+| 4 | `AdvantageStatus` | 缺 `'removed'` |
+| 5 | `PrincipleStatus` | 缺 `'ignored'` |
+| 6 | `ReviewCard` | 缺 `observations_dismissed` |
+| 7 | `DebateRoom` | 缺 `weakness_name` |
+| 8 | `LoopLogCreateResponse` | 缺 `hold_rate_30d` / `trigger_count_30d` / `loop_status` / `reason` / `hint` / `needs_revision` |
+| 9 | `LoopLogListResponse` | 缺 `hold_rate_30d` / `trigger_count_30d` / `hold_count_30d` |
+| 10 | `LoopDialogQuestionResponse` | 缺对话式前两步的 `trigger_scene` / `body_signal` |
+| 11 | `DebateFinishResponse` | 缺 `principle_candidate`（幂等分支还有 `already_generated`） |
+| 12 | `LoopLog.note` | 声明 `string \| null`，实际恒为字符串 |
+| 13 | `EventCard` | 缺 `linked_loop_ids` |
+| 14 | 4 个列表响应 | 缺聚合字段（`total` / `pending_count` / `candidate_count` / `records` / `rules`）——只是不完整，不是错误 |
+| 15 | 两个适配层头注释 | 已过时（`features/debate/api.ts` 第 1、4 条与 `features/weakness/api.ts` 第 1 条）——注释问题，非代码问题 |
+
+**建议**：与「把三个适配层合并回 `client.ts` / `types.ts`」合并成一个任务一起做，
+否则改两次。
+
+### 8.2 功能遗留（按模块）
+
+| 模块 | 遗留项 |
+|---|---|
+| 辩论房 | 辩题来源 P1/P2（从弱点回环、事件卡场景生成辩题）未接——后端已支持 `loop_id`/`weakness_id`/`source_id` |
+| 辩论房 | 多人辩论缺「被邀请者进房后的昵称区分」之外的参与者管理（当前只展示人数） |
+| 原则库 | 「关联回环」目前靠逐个拉弱点详情拼数据（最多 20 个弱点）。后端已补 `GET /api/loops`，前端尚未切过去 |
+| 垃圾桶 | 只做了弱点恢复；优势 `removed` 与原则 `ignored` 的恢复入口未做（服务端 `/restore` 已就绪） |
+| 回环 | 表单式新建未做「引用优势/原则」多选（payload 的 `linked_advantage_ids` / `linked_principle_ids` 已支持） |
+| 事件卡 | 历史列表只取最近 50 张，未分页（服务端支持 `limit` / `offset`） |
+| 弱点墙 | 分区折叠状态不持久化，刷新回默认 |
+| 弱点 | 无「删除弱点」——只有归档（与方案 3.8 一致，属于设计而非缺陷） |
+| 全局 | 深色模式（方案明确标 P1 后置）；ESLint / Prettier 未配置 |
+| 部署 | 阿里云实际部署（配置已就绪，见 `deploy/DEPLOY.md`） |
+| AI | 真实 Key 联调。当前全程 Mock，填 Key 并设 `AI_PROVIDER=hybrid` 即切换 |
+
+### 8.3 环境注意
+
+本开发容器有两个坑，**换到正常机器都不会出现**，但会让人误判：
+
+1. **`os.cpus().length === 0`** —— 会让 workbox 的 terser worker 池为 0，
+   前端构建卡死在生成 Service Worker 那一步。`web/vite.config.ts` 已自动降级
+   （仅 SW 不压缩，体积 +2KB，缓存行为一致）。不要删掉那段判断。
+2. **缺系统 tzdata** —— `zoneinfo.ZoneInfo("Asia/Shanghai")` 直接抛异常，服务起不来。
+   已在 `requirements.txt` 加入 PyPI `tzdata` 兜底；正常 Ubuntu 上不会用到。
+
+3. `/sdcard` 是 Android FUSE 文件系统：在本目录下直接 `npm install` 极慢，
+   且 `chmod` 不生效（不支持 UNIX 权限位）。前端构建建议在原生文件系统上做。
