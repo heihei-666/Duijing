@@ -203,6 +203,12 @@ class UserProfile(Base):
     # 事件卡自动扫描默认开启（每周日夜间）
     auto_scan_event_cards: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
+    # 辩题来源 P3 的缓存：连续几天没主动出题时，AI 根据弱点库生成一个辩题推给用户。
+    # 缓存一天，避免每次打开辩论页都调一次模型（那既慢又费钱）。
+    suggested_topic: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    suggested_stance: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    suggested_topic_on: Mapped[date_type | None] = mapped_column(Date, nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         UTCDateTime, default=utcnow, onupdate=utcnow, nullable=False

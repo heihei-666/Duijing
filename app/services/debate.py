@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
+from datetime import timedelta
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -29,16 +30,18 @@ from app.ai.router import (
 from app.config import settings
 from app.models import (
     Advantage,
+    UserProfile,
     DebateMessage,
     DebateReview,
     DebateRoom,
     DebateStatus,
     Principle,
+    User,
     WeaknessCard,
     WeaknessLoop,
 )
 from app.services import observations as observation_service
-from app.utils import clamp, now_utc
+from app.utils import clamp, local_today, now_utc
 
 logger = logging.getLogger("duijing.debate")
 
@@ -401,3 +404,93 @@ async def finish_room(session: AsyncSession, room: DebateRoom) -> None:
     room.status = DebateStatus.FINISHED.value
     room.finished_at = now_utc()
     await session.flush()
+
+
+# ─────────────────────────────────────────────────────────────
+# 辩题来源 P3：连续几天没主动出题时，AI 根据弱点库生成一个辩题
+# ─────────────────────────────────────────────────────────────
+
+# 多少天没主动开辩才提示。方案 3.1 写的是 3 天。
+SUGGESTION_IDLE_DAYS = 3
+
+
+async def suggestion_eligible(
+    session: AsyncSession, user_id: int, *, idle_days: int = SUGGESTION_IDLE_DAYS
+) -> tuple[bool, str]:
+    """判断该不该给这个用户推辩题。返回 (是否该推, 原因)。"""
+    since = now_utc() - timedelta(days=idle_days)
+    recent = await session.scalar(
+        select(DebateRoom.id)
+        .where(DebateRoom.user_id == user_id, DebateRoom.created_at >= since)
+        .limit(1)
+    )
+    if recent is not None:
+        return False, "recent_debate"
+
+    # 没有弱点就无从「根据弱点库生成」——那属于 P0 的范畴（让用户自己出题）。
+    # 硬推一个通用辩题只会变成噪音。
+    weakness = await session.scalar(
+        select(WeaknessCard.id)
+        .where(WeaknessCard.user_id == user_id, WeaknessCard.status != "archived")
+        .limit(1)
+    )
+    if weakness is None:
+        return False, "no_weakness"
+
+    return True, "ok"
+
+
+async def build_suggestion(
+    session: AsyncSession, user: User, profile: UserProfile
+) -> dict | None:
+    """生成（或取出当天缓存的）建议辩题。"""
+    eligible, reason = await suggestion_eligible(session, user.id)
+    if not eligible:
+        return {"topic": "", "stance": "", "reason": reason}
+
+    today = local_today()
+    if profile.suggested_topic and profile.suggested_topic_on == today:
+        return {
+            "topic": profile.suggested_topic,
+            "stance": profile.suggested_stance,
+            "reason": "ok",
+            "cached": True,
+        }
+
+    context = await load_context(session, user.id)
+    if not context.weaknesses:
+        return {"topic": "", "stance": "", "reason": "no_weakness"}
+
+    # 挑最该练的那条：撑住率最低、且已经有触发数据的优先
+    from app.services.loops import weakness_stats
+
+    stats = await weakness_stats(session, [w.id for w in context.weaknesses])
+    ranked = sorted(
+        context.weaknesses,
+        key=lambda w: (
+            stats.get(w.id).rate if stats.get(w.id) and stats.get(w.id).rate is not None else 999,
+            w.id,
+        ),
+    )
+    target = ranked[0]
+
+    scene = f"我发现自己反复出现一个问题：{target.name}。"
+    if target.description:
+        scene += f"具体表现是{target.description}。"
+    scene += "我想弄清楚这件事该怎么面对。"
+
+    topic, stance = await generate_topic(scene, context)
+    if not topic:
+        return {"topic": "", "stance": "", "reason": "generation_failed"}
+
+    profile.suggested_topic = topic[:200]
+    profile.suggested_stance = stance[:200]
+    profile.suggested_topic_on = today
+    await session.flush()
+
+    return {
+        "topic": topic,
+        "stance": stance,
+        "reason": "ok",
+        "based_on": {"weakness_id": target.id, "weakness_name": target.name},
+    }

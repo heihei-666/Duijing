@@ -33,6 +33,7 @@ from app.api import weaknesses
 from app.ai.router import provider_status
 from app.config import settings
 from app.db import healthcheck, init_db
+from app.services.metrics import snapshot as metrics_snapshot
 from app.services.scheduler import shutdown_scheduler, start_scheduler
 
 logging.basicConfig(
@@ -102,6 +103,9 @@ async def health():
     db_ok = await healthcheck()
     return {
         "status": "ok" if db_ok else "degraded",
+        # 方案 7.7 的四个监控指标里，只有 SSE 连接数需要应用内埋点，
+        # 其余三个由 deploy/check-health.sh 从操作系统读取
+        "metrics": metrics_snapshot(),
         "app": settings.APP_NAME,
         "version": __version__,
         "env": settings.ENV,

@@ -183,3 +183,102 @@ class TestMultiPersonHostMode:
         # 参与者从 1 变 2，房间详情里的 participant_count 应反映出来
         detail = alice.get(f"/api/debates/{room['id']}").json()
         assert detail["room"]["participant_count"] == 2
+
+
+# ─────────────────────────────────────────────────────────────
+# 辩题来源 P3：连续几天没主动出题时，AI 根据弱点库生成一个辩题
+# ─────────────────────────────────────────────────────────────
+
+
+class TestTopicSuggestionP3:
+    """方案 3.1 的 P3。
+
+    注意这不是「推送」——方案 3.9 规定默认不推送，唯一例外是用户
+    主动预约的辩论提醒。所谓「推」只是在辩论页上放一个建议，
+    用户打开才看得到。这条边界不能越。
+    """
+
+    def test_no_suggestion_without_weakness(self, client, unique_name):
+        """没有弱点就无从「根据弱点库生成」，硬推通用辩题只会变成噪音。"""
+        actor = register(client, unique_name("p3a"))
+        body = actor.get("/api/debates/suggestion").json()["suggestion"]
+        assert body["reason"] == "no_weakness"
+        assert body["topic"] == ""
+
+    def test_suggestion_generated_when_idle_and_has_weakness(self, client, unique_name):
+        actor = register(client, unique_name("p3b"))
+        make_weakness(actor)
+
+        body = actor.get("/api/debates/suggestion").json()["suggestion"]
+        assert body["reason"] == "ok"
+        assert body["topic"], "应当生成一个辩题"
+        assert body.get("based_on", {}).get("weakness_name")
+
+    def test_suggestion_is_cached_within_the_day(self, client, unique_name):
+        """按天缓存：不能每次打开辩论页都调一次模型，那既慢又费钱。"""
+        actor = register(client, unique_name("p3c"))
+        make_weakness(actor)
+
+        first = actor.get("/api/debates/suggestion").json()["suggestion"]
+        second = actor.get("/api/debates/suggestion").json()["suggestion"]
+
+        assert first["topic"] == second["topic"]
+        assert second.get("cached") is True
+
+    def test_no_suggestion_right_after_a_debate(self, client, unique_name):
+        """刚开过辩就不该再推——那是打扰，不是帮助。"""
+        actor = register(client, unique_name("p3d"))
+        make_weakness(actor)
+        actor.post("/api/debates", json={"topic": "该不该", "stance": "该"})
+
+        body = actor.get("/api/debates/suggestion").json()["suggestion"]
+        assert body["reason"] == "recent_debate"
+
+    def test_suggestion_requires_login(self, client):
+        assert client.get("/api/debates/suggestion").status_code == 401
+
+
+# ─────────────────────────────────────────────────────────────
+# 方案 7.7 的 SSE 连接数指标
+# ─────────────────────────────────────────────────────────────
+
+
+class TestSSEMetrics:
+    """四个监控指标里只有 SSE 连接数需要应用内埋点——它是长连接，外部看不到。
+
+    这个数值得盯：单 worker 下每个 SSE 连接占住一个协程并持有一次会话，
+    连接数失控（比如前端泄漏没关）会先在内存上体现，等发现时已经晚了。
+    """
+
+    def test_counter_goes_up_and_down(self):
+        from app.services import metrics
+
+        base = metrics.snapshot()["sse_active"]
+        assert metrics.sse_opened() == base + 1
+        assert metrics.sse_opened() == base + 2
+        assert metrics.sse_closed() == base + 1
+        assert metrics.sse_closed() == base
+
+    def test_counter_never_goes_negative(self):
+        """漏减一次就永远偏高，阈值告警从此失真；多减一次则会出现负数。"""
+        from app.services import metrics
+
+        for _ in range(5):
+            metrics.sse_closed()
+        assert metrics.snapshot()["sse_active"] >= 0
+
+    def test_peak_is_tracked(self):
+        from app.services import metrics
+
+        before = metrics.snapshot()["sse_peak"]
+        for _ in range(3):
+            metrics.sse_opened()
+        assert metrics.snapshot()["sse_peak"] >= before
+        for _ in range(3):
+            metrics.sse_closed()
+
+    def test_health_exposes_metrics(self, client):
+        body = client.get("/api/health").json()
+        assert "metrics" in body
+        assert "sse_active" in body["metrics"]
+        assert body["metrics"]["sse_active"] >= 0

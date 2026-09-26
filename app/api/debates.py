@@ -33,6 +33,7 @@ from app.models import (
     WeaknessLoop,
 )
 from app.services import debate as debate_service
+from app.services import metrics as metrics_service
 from app.services import push as push_service
 from app.services.ratelimit import ai_limiter, debate_limiter, enforce
 from app.services.serializers import (
@@ -169,6 +170,25 @@ async def list_debates(
             )
         )
     return {"rooms": items, "total": len(items)}
+
+
+@router.get("/suggestion")
+async def debate_suggestion(
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """方案 3.1 的辩题来源 P3：连续几天没主动出题时，根据弱点库生成一个辩题。
+
+    注意这里**不是推送** —— 方案 3.9 规定「默认不推送，唯一例外是用户
+    主动预约的辩论提醒」。所谓「推」只是在辩论页上放一个建议，
+    用户打开才看得到。不要把它做成通知。
+
+    结果按天缓存，避免每次打开辩论页都调一次模型。
+    """
+    profile = await ensure_profile(session, user)
+    suggestion = await debate_service.build_suggestion(session, user, profile)
+    await session.commit()
+    return {"suggestion": suggestion}
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)
@@ -473,6 +493,7 @@ async def stream_reply(
     await load_room_for_user(session, room_id, user)  # 仅做权限校验
 
     async def event_generator():
+        metrics_service.sse_opened()
         try:
             async with session_scope() as s:
                 room = await s.get(DebateRoom, room_id)
@@ -565,6 +586,10 @@ async def stream_reply(
         except Exception:  # noqa: BLE001 - 流里抛异常会让前端静默卡住，必须显式送出
             logger.exception("SSE 生成失败 room=%s", room_id)
             yield _sse("error", {"detail": "AI 生成失败，请重试"})
+        finally:
+            # 必须在 finally 里减：客户端中途关页面时生成器会被销毁，
+            # 漏减一次计数就永远偏高，阈值告警从此失真。
+            metrics_service.sse_closed()
 
     return EventSourceResponse(event_generator(), ping=15)
 
