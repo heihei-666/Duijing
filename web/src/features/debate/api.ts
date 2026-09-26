@@ -30,7 +30,10 @@ import type {
   DebateMessage,
   DebateRoom,
   DebateSendMessageResponse,
+  DebateSourceType,
   DebateStatus,
+  EventCardResult,
+  LoopStatus,
   ReviewCard,
 } from '@/api/types';
 
@@ -221,4 +224,119 @@ export function cancelDebateReminder(id: number): Promise<{ ok: boolean; cancell
   return apiRequest<{ ok: boolean; cancelled: boolean }>(`/debates/${id}/reminder`, {
     method: 'DELETE',
   });
+}
+
+/* ------------------------------------------- 辩题来源 P1 回环 / P2 事件卡 */
+
+/**
+ * 起辩来源。回环 → 后端用它的触发场景 / 身体信号 / 预案拼场景（P1）；
+ * 事件卡 → 用卡面内容当场景（P2）。两者都不需要用户再输入任何东西。
+ */
+export type DebateSourceRef =
+  | { kind: 'loop'; loopId: number }
+  | { kind: 'event_card'; cardId: number };
+
+/**
+ * `POST /api/debates` 的来源写法。
+ *
+ * 为什么不直接用 `client.ts` 的 `debateApi.create(...)`：
+ *   1. `types.ts` 的 `DebateCreatePayload` 里 `stance` 是必填、且**没有 `weakness_id`**
+ *      （`types.ts` 本次不允许改）。从回环起辩时后端会自己由 `loop_id` 推出
+ *      `weakness_id`（app/api/debates.py 的 `_resolve_source`），这里只把
+ *      `weakness_id` 按后端契约补进类型，仍然走同一个 `apiRequest`。
+ *   2. 一键起辩时用户不输入立场：`stance` 传空串，后端在 topic 为空时会用
+ *      AI 生成的立场兜底（`stance = stance or generated_stance`）。
+ */
+export interface DebateSourcePayload {
+  topic?: string;
+  stance?: string;
+  scene?: string;
+  source_type?: DebateSourceType;
+  source_id?: number | null;
+  loop_id?: number | null;
+  /** types.ts 的 DebateCreatePayload 缺这个字段，按后端契约补上 */
+  weakness_id?: number | null;
+}
+
+/** 发起辩论（来源版）。响应仍是 `{ room, first_message }`。 */
+export function createDebateFromSource(
+  payload: DebateSourcePayload,
+): Promise<DebateCreateResponse> {
+  return apiRequest<DebateCreateResponse>('/debates', {
+    method: 'POST',
+    body: { stance: '', ...payload },
+  });
+}
+
+/** 把来源标识翻译成请求体：只有这里知道每种来源该发哪些字段 */
+export function payloadFromSource(source: DebateSourceRef): DebateSourcePayload {
+  return source.kind === 'loop'
+    ? // 只给 loop_id：source_type 显式写成 weakness，后端据此把这场辩记成
+      // 「围绕弱点练的」，同时由 loop_id 带出 weakness_id 与完整回环上下文。
+      // 注意不要顺手把 loop_id 塞进 source_id——后端会拿 source_id 去查弱点卡。
+      { source_type: 'weakness', loop_id: source.loopId }
+    : { source_type: 'event_card', source_id: source.cardId };
+}
+
+/**
+ * 「正在练的回环」（P1 的候选列表）。
+ *
+ * `GET /api/loops` 的 status 支持逗号分隔多值（app/api/weaknesses.py 的 list_loops
+ * 里 `status` 与 `status_filter` 都接受）。只取 active / needs_revision：
+ * 草稿还没成形、已暂停的不属于「正在练」，列出来只会让选择变难。
+ */
+export interface DebateLoopOption {
+  id: number;
+  weakness_id: number;
+  weakness_name: string;
+  trigger_scene: string;
+  action_plan: string;
+  status: LoopStatus;
+  /** null = 还没有触发记录（不是 0%），列表里显示 `--` */
+  hold_rate_30d: number | null;
+}
+
+export function listDebateLoopOptions(): Promise<{ loops: DebateLoopOption[]; total: number }> {
+  return apiRequest<{ loops: DebateLoopOption[]; total: number }>('/loops', {
+    query: { status: 'active,needs_revision' },
+  });
+}
+
+/** 「就一件刚发生的事辩」的候选列表（P2）。默认最近 10 条，够选，不用翻历史。 */
+export interface DebateEventCardOption {
+  id: number;
+  content: string;
+  result: EventCardResult | null;
+  created_at: string;
+}
+
+export function listDebateEventCards(
+  limit = 10,
+): Promise<{ cards: DebateEventCardOption[]; total: number }> {
+  return apiRequest<{ cards: DebateEventCardOption[]; total: number }>('/event-cards', {
+    query: { limit },
+  });
+}
+
+
+/* ---------------------------------------------------- 辩题来源 P3（建议辩题） */
+
+/**
+ * 方案 3.1 的 P3：连续几天没主动出题时，AI 根据弱点库生成一个辩题。
+ *
+ * 注意**这不是推送** —— 方案 3.9 规定默认不推送，唯一例外是用户主动预约的
+ * 辩论提醒。它只是辩论页上的一个建议，用户打开才看得到。
+ */
+export interface DebateSuggestion {
+  topic: string;
+  stance: string;
+  /** ok | recent_debate | no_weakness | generation_failed */
+  reason: string;
+  based_on?: { weakness_id: number; weakness_name: string };
+  cached?: boolean;
+}
+
+export async function getDebateSuggestion(): Promise<DebateSuggestion> {
+  const data = await apiRequest<{ suggestion: DebateSuggestion }>('/debates/suggestion');
+  return data.suggestion;
 }

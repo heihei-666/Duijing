@@ -6,12 +6,19 @@ import { Button } from '@/components/common/Button';
 import { EmptyState } from '@/components/common/EmptyState';
 import { DebateListItem } from '@/features/debate/DebateListItem';
 import { NewDebateSheet } from '@/features/debate/NewDebateSheet';
-import { listDebates } from '@/features/debate/api';
+import {
+  createDebateFromSource,
+  getDebateSuggestion,
+  listDebates,
+  type DebateSuggestion,
+} from '@/features/debate/api';
 import { PlusIcon } from '@/features/debate/icons';
 
 /**
  * 辩论 Tab（方案 3.1）。三个分区：
- *   新辩论 —— 入口按钮 + Sheet 表单（自己出题 / 描述场景，都属于 P0）
+ *   新辩论 —— 入口按钮 + Sheet 表单。Sheet 里四个辩题来源：
+ *             从回环起辩（P1）/ 刚发生的事（P2）/ 描述场景 / 自己出题（P0），
+ *             前两个是一键发起，不需要用户输入
  *   进行中 —— status_filter=active,paused
  *   历史   —— status_filter=finished
  *
@@ -27,6 +34,12 @@ export default function DebatesPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [sheetOpen, setSheetOpen] = useState(false);
+  /**
+   * 辩题来源 P3 的建议。只在「连续几天没开辩 + 有弱点」时后端才给，
+   * 其余情况 reason 会说明原因，这里就不显示。
+   */
+  const [suggestion, setSuggestion] = useState<DebateSuggestion | null>(null);
+  const [startingSuggestion, setStartingSuggestion] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -49,6 +62,36 @@ export default function DebatesPage() {
     void load();
   }, [load]);
 
+  useEffect(() => {
+    let cancelled = false;
+    getDebateSuggestion()
+      .then((data) => {
+        if (!cancelled && data.reason === 'ok' && data.topic) setSuggestion(data);
+      })
+      // 建议拿不到就算了，它只是锦上添花，不该影响辩论页本身
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  /** 一键接下 AI 出的这道题。 */
+  const acceptSuggestion = useCallback(async () => {
+    if (!suggestion) return;
+    setStartingSuggestion(true);
+    try {
+      // 返回的是 { room, first_message } 信封，不是 room 本身
+      const { room } = await createDebateFromSource({
+        topic: suggestion.topic,
+        stance: suggestion.stance,
+      });
+      navigate(`/debates/${room.id}`);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : '没能开始，请稍后再试');
+      setStartingSuggestion(false);
+    }
+  }, [navigate, suggestion]);
+
   const openRoom = useCallback(
     (id: number) => {
       navigate(`/debates/${id}`);
@@ -65,6 +108,31 @@ export default function DebatesPage() {
         </p>
       </header>
 
+      {/*
+        AI 出的题放在最上面 —— 它比「开一场新的辩论」更具体：
+        用户不需要想辩什么，看一眼就能决定接不接。
+        但它只是建议，所以「先不用」必须同样显眼，不能做成隐藏入口。
+      */}
+      {suggestion ? (
+        <section className="rounded-2xl border border-info-light bg-surface p-4 shadow-card">
+          <p className="text-xs text-info">AI 给你出了一道题</p>
+          <p className="mt-2 text-[15px] leading-relaxed text-primary">{suggestion.topic}</p>
+          <p className="mt-1.5 text-xs leading-relaxed text-tertiary">
+            这几天没开辩，这道题基于你在留意的
+            {suggestion.based_on ? `「${suggestion.based_on.weakness_name}」` : '弱点库'}
+            。
+          </p>
+          <div className="mt-3 flex gap-2">
+            <Button onClick={() => void acceptSuggestion()} loading={startingSuggestion}>
+              就辩这个
+            </Button>
+            <Button variant="ghost" onClick={() => setSuggestion(null)} disabled={startingSuggestion}>
+              先不用
+            </Button>
+          </div>
+        </section>
+      ) : null}
+
       <div className="space-y-2.5">
         <h2 className="text-xs text-tertiary">新辩论</h2>
         <Button size="lg" fullWidth onClick={() => setSheetOpen(true)}>
@@ -72,7 +140,7 @@ export default function DebatesPage() {
           开一场新的辩论
         </Button>
         <p className="text-xs leading-relaxed text-tertiary">
-          自己出题，或者描述一个场景。回合数由 AI 按辩题复杂度决定，落在 4–8 轮。
+          从正在练的回环、刚记下的一件事起辩，也可以自己出题。回合数由 AI 按辩题复杂度决定，落在 4–8 轮。
         </p>
       </div>
 
