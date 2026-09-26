@@ -13,6 +13,23 @@
 #
 set -euo pipefail
 
+# 取本机公网 IP。
+#
+# 注意：**不要用 api.ipify.org** —— 实测在国内服务器上完全不可达，
+# 会让整个流程静默停在「取不到 IP」。这里按可达性排序，逐个回退。
+get_public_ip() {
+  local url candidate
+  for url in "https://ip.3322.net" "https://ifconfig.me/ip" "https://ipinfo.io/ip" "https://api.ipify.org"; do
+    candidate="$(curl -s --max-time 8 "$url" 2>/dev/null \
+      | grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}' | head -1)"
+    if [ -n "$candidate" ]; then
+      printf '%s' "$candidate"
+      return 0
+    fi
+  done
+  return 1
+}
+
 DOMAIN="${1:-${DOMAIN:-}}"
 APP_DIR="${APP_DIR:-/opt/duijing}"
 WEB_ROOT="${WEB_ROOT:-/var/www/duijing/dist}"
@@ -44,7 +61,7 @@ resolve_a() {
 
 RESOLVED="$(resolve_a "$DOMAIN")"
 WWW_RESOLVED="$(resolve_a "www.$DOMAIN")"
-PUBLIC_IP="$(curl -s --max-time 8 https://api.ipify.org || true)"
+PUBLIC_IP="$(get_public_ip || echo '')"
 if [ -z "$RESOLVED" ]; then
   die "$DOMAIN 解析不到任何 IP。请先在 DNS 添加 A 记录指向 $PUBLIC_IP"
 fi

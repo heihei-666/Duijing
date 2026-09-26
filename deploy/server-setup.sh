@@ -11,6 +11,23 @@
 #
 set -euo pipefail
 
+# 取本机公网 IP。
+#
+# 注意：**不要用 api.ipify.org** —— 实测在国内服务器上完全不可达，
+# 会让整个流程静默停在「取不到 IP」。这里按可达性排序，逐个回退。
+get_public_ip() {
+  local url candidate
+  for url in "https://ip.3322.net" "https://ifconfig.me/ip" "https://ipinfo.io/ip" "https://api.ipify.org"; do
+    candidate="$(curl -s --max-time 8 "$url" 2>/dev/null \
+      | grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}' | head -1)"
+    if [ -n "$candidate" ]; then
+      printf '%s' "$candidate"
+      return 0
+    fi
+  done
+  return 1
+}
+
 DOMAIN="${DOMAIN:-}"
 APP_DIR="${APP_DIR:-/opt/duijing}"
 APP_USER="${APP_USER:-app}"
@@ -155,7 +172,7 @@ else
     CORS="https://$DOMAIN"
   else
     # 备案期间先用 IP 验证；HTTP 下 Cookie 不能带 Secure，否则浏览器不回传
-    IP="$(curl -s --max-time 5 https://api.ipify.org || hostname -I | awk '{print $1}')"
+    IP="$(get_public_ip || hostname -I | awk '{print $1}')"
     CORS="http://$IP"
   fi
 
@@ -326,7 +343,7 @@ else
   die "后端健康检查失败，看 journalctl -u duijing -n 50"
 fi
 
-IP="$(curl -s --max-time 5 https://api.ipify.org || hostname -I | awk '{print $1}')"
+IP="$(get_public_ip || hostname -I | awk '{print $1}')"
 echo
 printf '\033[1;32m═══ 服务器初始化完成 ═══\033[0m\n'
 echo "  访问地址（HTTP）：http://$IP"

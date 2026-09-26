@@ -16,6 +16,23 @@
 #
 set -uo pipefail
 
+# 取本机公网 IP。
+#
+# 注意：**不要用 api.ipify.org** —— 实测在国内服务器上完全不可达，
+# 会让整个流程静默停在「取不到 IP」。这里按可达性排序，逐个回退。
+get_public_ip() {
+  local url candidate
+  for url in "https://ip.3322.net" "https://ifconfig.me/ip" "https://ipinfo.io/ip" "https://api.ipify.org"; do
+    candidate="$(curl -s --max-time 8 "$url" 2>/dev/null \
+      | grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}' | head -1)"
+    if [ -n "$candidate" ]; then
+      printf '%s' "$candidate"
+      return 0
+    fi
+  done
+  return 1
+}
+
 DOMAIN="${DOMAIN:-duijing.xyz}"
 APP_DIR="${APP_DIR:-/opt/duijing}"
 FLAG="$APP_DIR/data/.https-enabled"
@@ -36,9 +53,9 @@ touch "$LOG"
     exit 0
   fi
 
-  PUBLIC_IP="$(curl -s --max-time 10 https://api.ipify.org || echo '')"
+  PUBLIC_IP="$(get_public_ip || echo '')"
   if [ -z "$PUBLIC_IP" ]; then
-    echo "  取不到本机公网 IP，稍后重试"
+    echo "  所有 IP 回显服务都不可达，稍后重试"
     exit 0
   fi
 
