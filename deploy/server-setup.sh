@@ -23,7 +23,9 @@ log()  { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m[!]\033[0m %s\n' "$*"; }
 die()  { printf '\033[1;31m[✗]\033[0m %s\n' "$*" >&2; exit 1; }
 
-[ "$(id -u)" -eq 0 ] || die "请用 root 运行（sudo bash $0）"
+# 需要 root 权限。若当前是具备 sudo 的普通用户（如阿里云的 admin/ubuntu），
+# 用 `sudo bash $0` 执行即可——本脚本内部大量使用 sudo -u，不要求直接以 root 登录。
+[ "$(id -u)" -eq 0 ] || die "需要 root 权限，请用：sudo bash $0"
 
 # ─────────────────────────────────────────────────────────────
 # 1. Swap —— 2G 内存的机器必须开，否则 AI 峰值和任何构建都可能被 OOM 干掉
@@ -72,7 +74,8 @@ log "准备应用用户与目录"
 # 注意 -M：不要创建家目录。
 # 若写成 `useradd -m -d "$APP_DIR"`，家目录会被建成 $APP_DIR（含 .bashrc 等），
 # 后面 git clone 就会因为「目标目录非空」直接失败——这是首次部署最容易踩的坑。
-id -u "$APP_USER" >/dev/null 2>&1 || useradd -r -M -s /bin/bash "$APP_USER"
+# -U 保证创建同名组：systemd 单元里写了 Group=app，没有这个组会启动失败。
+id -u "$APP_USER" >/dev/null 2>&1 || useradd -r -U -M -s /bin/bash "$APP_USER"
 
 mkdir -p "$WEB_ROOT" /var/backups/duijing
 # $APP_DIR 不在这里创建：git clone 要求目标为空目录，
@@ -100,6 +103,13 @@ else
     fi
     mv "$APP_DIR" "$STASH"
   fi
+  # 目录可能已经存在（比如运维提前建好、属主是登录用户）。
+  # git clone 允许克隆进「已存在的空目录」，但要求对它有写权限——
+  # 属主不是 app 就会报 Permission denied。
+  if [ -d "$APP_DIR" ]; then
+    chown "$APP_USER:$APP_USER" "$APP_DIR"
+  fi
+
   log "克隆仓库"
   sudo -u "$APP_USER" git clone --quiet "$REPO_URL" "$APP_DIR"
 fi
