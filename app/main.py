@@ -17,7 +17,17 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from app import __version__
-from app.api import advantages, archive, auth, debates, event_cards, observations, principles
+from app.api import (
+    account,
+    advantages,
+    archive,
+    auth,
+    debates,
+    event_cards,
+    observations,
+    principles,
+    push,
+)
 from app.api import status_bar
 from app.api import weaknesses
 from app.ai.router import provider_status
@@ -82,6 +92,8 @@ app.include_router(advantages.router)
 app.include_router(principles.router)
 app.include_router(observations.router)
 app.include_router(archive.router)
+app.include_router(push.router)
+app.include_router(account.router)
 
 
 @app.get("/api/health", tags=["系统"])

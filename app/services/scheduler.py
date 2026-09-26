@@ -19,6 +19,7 @@ from app.db import session_scope
 from app.services import event_cards as event_card_service
 from app.services import loops as loop_service
 from app.services import observations as observation_service
+from app.services import push as push_service
 
 logger = logging.getLogger("duijing.scheduler")
 
@@ -50,6 +51,21 @@ async def job_expire_observations() -> None:
             logger.info("过期 AI 观察候选 %s 条", count)
     except Exception:  # noqa: BLE001
         logger.exception("AI 观察过期任务失败")
+
+
+async def job_dispatch_reminders() -> None:
+    """每分钟检查一次到点的辩论提醒并推送。
+
+    这是产品唯一的主动触达，所以宁可多扫一次（每分钟的空查询成本极低），
+    也不要让它晚到——用户约了「今晚 8 点」，8 点 05 分才响就已经失信了。
+    """
+    try:
+        async with session_scope() as session:
+            stats = await push_service.dispatch_due_reminders(session)
+        if stats.get("due"):
+            logger.info("辩论提醒派发：%s", stats)
+    except Exception:  # noqa: BLE001
+        logger.exception("提醒派发任务失败")
 
 
 async def job_archive_stale_advantages() -> None:
@@ -96,6 +112,13 @@ def start_scheduler() -> AsyncIOScheduler | None:
         misfire_grace_time=3600,
     )
     scheduler.add_job(
+        job_dispatch_reminders,
+        IntervalTrigger(minutes=1),
+        id="dispatch_reminders",
+        replace_existing=True,
+        misfire_grace_time=120,
+    )
+    scheduler.add_job(
         job_expire_observations,
         IntervalTrigger(hours=1),
         id="expire_observations",
@@ -120,7 +143,7 @@ def start_scheduler() -> AsyncIOScheduler | None:
     scheduler.start()
     _scheduler = scheduler
     logger.info(
-        "定时任务已启动：周扫描=%s %02d:00，观察过期=每小时，清理=每日 03:00/03:30",
+        "定时任务已启动：提醒派发=每分钟，周扫描=%s %02d:00，观察过期=每小时，清理=每日 03:00/03:30",
         settings.SCAN_CRON_DAY,
         settings.SCAN_CRON_HOUR,
     )

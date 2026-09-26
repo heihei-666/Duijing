@@ -45,11 +45,16 @@ class Stats:
     not_triggered_count: int = 0
 
     @property
-    def rate(self) -> int:
+    def rate(self) -> int | None:
+        """撑住率。**无触发时为 None**，前端据此显示「--」而不是 0%。"""
         return hold_rate(self.hold_count, self.trigger_count)
 
     @property
-    def bucket(self) -> str:
+    def has_data(self) -> bool:
+        return self.trigger_count > 0
+
+    @property
+    def bucket(self) -> str | None:
         return rate_bucket(self.rate)
 
 
@@ -112,6 +117,82 @@ def _accumulate(stats: Stats, outcome: str, count: int) -> None:
         stats.trigger_count += count
     elif outcome == LoopResult.NOT_TRIGGERED.value:
         stats.not_triggered_count += count
+
+
+@dataclass(slots=True)
+class Trend:
+    """本周与上周的撑住率对比。
+
+    用来回答用户最想知道的那个问题：**我在变好吗？**
+    只有 30 天撑住率这一个静态数字是不够的——用户努力了三周，
+    看到的还是「67%」，他无法感知自己的进步。
+
+    两个窗口都没有触发数据时，delta 为 None，前端不显示（而不是显示 0）。
+    """
+
+    rate_7d: int | None = None
+    rate_prev_7d: int | None = None
+
+    @property
+    def delta(self) -> int | None:
+        if self.rate_7d is None or self.rate_prev_7d is None:
+            return None
+        return self.rate_7d - self.rate_prev_7d
+
+
+async def _window_stats(
+    session: AsyncSession, ids: list[int], *, column, start: date_type, end: date_type
+) -> dict[int, Stats]:
+    rows = await session.execute(
+        select(column, LoopLog.result, func.count(LoopLog.id))
+        .where(column.in_(ids), LoopLog.date >= start, LoopLog.date <= end)
+        .group_by(column, LoopLog.result)
+    )
+    result: dict[int, Stats] = {i: Stats() for i in ids}
+    for key, outcome, count in rows.all():
+        _accumulate(result.setdefault(key, Stats()), outcome, count)
+    return result
+
+
+def _trend_from(cur: dict[int, Stats], prev: dict[int, Stats], ids: list[int]) -> dict[int, Trend]:
+    out: dict[int, Trend] = {}
+    for i in ids:
+        c = cur.get(i, Stats())
+        pv = prev.get(i, Stats())
+        out[i] = Trend(rate_7d=c.rate, rate_prev_7d=pv.rate)
+    return out
+
+
+async def loop_trends(session: AsyncSession, loop_ids: list[int]) -> dict[int, Trend]:
+    """回环的「本周 vs 上周」趋势。"""
+    if not loop_ids:
+        return {}
+    today = local_today()
+    cur = await _window_stats(
+        session, loop_ids, column=LoopLog.loop_id,
+        start=today - timedelta(days=6), end=today,
+    )
+    prev = await _window_stats(
+        session, loop_ids, column=LoopLog.loop_id,
+        start=today - timedelta(days=13), end=today - timedelta(days=7),
+    )
+    return _trend_from(cur, prev, loop_ids)
+
+
+async def weakness_trends(session: AsyncSession, weakness_ids: list[int]) -> dict[int, Trend]:
+    """弱点的「本周 vs 上周」趋势（跨该弱点下所有回环汇总）。"""
+    if not weakness_ids:
+        return {}
+    today = local_today()
+    cur = await _window_stats(
+        session, weakness_ids, column=LoopLog.weakness_id,
+        start=today - timedelta(days=6), end=today,
+    )
+    prev = await _window_stats(
+        session, weakness_ids, column=LoopLog.weakness_id,
+        start=today - timedelta(days=13), end=today - timedelta(days=7),
+    )
+    return _trend_from(cur, prev, weakness_ids)
 
 
 async def drill_counts(session: AsyncSession, weakness_ids: list[int]) -> dict[int, int]:
@@ -217,7 +298,7 @@ def should_suggest_downgrade(stats: Stats) -> bool:
 
     **只是提示，绝不自动降级**（第九章第 8 条）。
     """
-    return stats.rate >= 80 and stats.trigger_count >= 5
+    return stats.has_data and stats.rate is not None and stats.rate >= 80 and stats.trigger_count >= 5
 
 
 def should_suggest_archive(stats: Stats) -> bool:
@@ -359,15 +440,17 @@ async def weakness_payload(session: AsyncSession, card: WeaknessCard) -> dict:
     """
     from app.services.serializers import weakness_out
 
-    stats = (await weakness_stats(session, [card.id])).get(card.id, Stats())
+    st = (await weakness_stats(session, [card.id])).get(card.id, Stats())
     drills = (await drill_counts(session, [card.id])).get(card.id, 0)
     plans = (await plan_counts(session, [card.id])).get(card.id, 0)
+    trend = (await weakness_trends(session, [card.id])).get(card.id)
 
     return weakness_out(
         card,
-        trigger_count=stats.trigger_count,
-        hold_count=stats.hold_count,
-        hold_rate=stats.rate,
+        trigger_count=st.trigger_count,
+        hold_count=st.hold_count,
+        hold_rate=st.rate,
         plan_count=plans,
         drill_count=drills,
+        trend=trend,
     )

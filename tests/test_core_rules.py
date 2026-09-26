@@ -118,9 +118,11 @@ class TestLoopLogIsSourceOfTruth:
         weakness = make_weakness(actor)
         loop = make_loop(actor, weakness["id"])
 
-        # 初始：零触发，撑住率 0
+        # 初始：零触发 → 撑住率必须是 null，不能是 0
+        # 0% 的含义是「每次都破功」，而这里其实是「还没练过」。
+        # 渲染成 0% 会让刚建好回环的用户以为自己在持续失败。
         detail = actor.get(f"/api/weaknesses/{weakness['id']}").json()
-        assert detail["loops"][0]["hold_rate_30d"] == 0
+        assert detail["loops"][0]["hold_rate_30d"] is None
         assert detail["loops"][0]["trigger_count_30d"] == 0
 
         # 4 次撑住 + 1 次破功 = 5 次触发，撑住率 80%
@@ -792,3 +794,109 @@ class TestLoopListing:
         bob = register(client, unique_name("lb"), invite_code=code)
 
         assert bob.get("/api/loops").json()["total"] == 0
+
+
+# ─────────────────────────────────────────────────────────────
+# 无数据 ≠ 0%：这是新用户看到的第一个数字，不能误导
+# ─────────────────────────────────────────────────────────────
+
+
+class TestNoDataIsNotNullRate:
+    """撑住率在「还没有触发记录」时必须是 null。
+
+    用户建完第一个回环、还没练过时，如果看到「撑住率 0%」，
+    他会以为自己一直在失败——而他其实一次都没练过。
+    这个区别必须体现在**数据层**，而不是靠前端判断，
+    否则任何一个新的消费方都可能再次误读。
+    """
+
+    def test_new_loop_has_null_rate(self, client, unique_name):
+        actor = register(client, unique_name("null1"))
+        weakness = make_weakness(actor)
+        loop = make_loop(actor, weakness["id"])
+
+        detail = actor.get(f"/api/weaknesses/{weakness['id']}").json()
+        assert detail["loops"][0]["hold_rate_30d"] is None
+        assert detail["loops"][0]["rate_bucket"] is None if "rate_bucket" in detail["loops"][0] else True
+        assert detail["weakness"]["hold_rate_30d"] is None
+
+        # 状态栏里也不该出现 0
+        bar = actor.get("/api/status-bar").json()
+        assert bar["today_loops"][0]["hold_rate_30d"] is None
+
+        # 列表接口同理
+        listing = actor.get("/api/weaknesses").json()
+        card = listing["groups"]["improving"][0]
+        assert card["hold_rate_30d"] is None
+
+    def test_zero_percent_is_distinguishable_from_no_data(self, client, unique_name):
+        """真的每次都破功时才是 0%，必须与「无数据」区分开。"""
+        actor = register(client, unique_name("null2"))
+        weakness = make_weakness(actor)
+        loop = make_loop(actor, weakness["id"])
+
+        first = actor.post(f"/api/loops/{loop['id']}/logs", json={"result": "break"}).json()
+        assert first["hold_rate_30d"] == 0, "真的破功了才显示 0%"
+        assert first["trigger_count_30d"] == 1
+
+        after = actor.get(f"/api/weaknesses/{weakness['id']}").json()
+        assert after["loops"][0]["hold_rate_30d"] == 0
+        assert after["loops"][0]["hold_rate_30d"] is not None
+
+    def test_only_not_triggered_logs_still_count_as_no_data(self, client, unique_name):
+        """「未触发」不进分母——只有未触发记录时，依然算没有数据。"""
+        actor = register(client, unique_name("null3"))
+        weakness = make_weakness(actor)
+        loop = make_loop(actor, weakness["id"])
+
+        result = actor.post(
+            f"/api/loops/{loop['id']}/logs", json={"result": "not_triggered"}
+        ).json()
+        assert result["hold_rate_30d"] is None
+        assert result["trigger_count_30d"] == 0
+
+
+class TestHoldRateTrend:
+    """「我在变好吗？」——只有 30 天撑住率这一个静态数字是回答不了的。"""
+
+    def test_trend_absent_without_history(self, client, unique_name):
+        actor = register(client, unique_name("tr1"))
+        weakness = make_weakness(actor)
+        loop = make_loop(actor, weakness["id"])
+        actor.post(f"/api/loops/{loop['id']}/logs", json={"result": "hold"})
+
+        detail = actor.get(f"/api/weaknesses/{weakness['id']}").json()
+        item = detail["loops"][0]
+        # 本周有数据、上周没有 → 无法比较，delta 必须是 None（不是 0）
+        assert item["hold_rate_7d"] == 100
+        assert item["hold_rate_prev_7d"] is None
+        assert item["trend_delta"] is None
+
+    def test_trend_delta_computed_when_both_weeks_have_data(self, client, unique_name):
+        from datetime import timedelta
+
+        from app.utils import local_today
+
+        actor = register(client, unique_name("tr2"))
+        weakness = make_weakness(actor)
+        loop = make_loop(actor, weakness["id"])
+
+        today = local_today()
+        # 上周：1 撑住 1 破功 → 50%
+        for offset, outcome in ((10, "hold"), (9, "break")):
+            actor.post(
+                f"/api/loops/{loop['id']}/logs",
+                json={"result": outcome, "date": (today - timedelta(days=offset)).isoformat()},
+            )
+        # 本周：3 撑住 0 破功 → 100%
+        for offset in (2, 1, 0):
+            actor.post(
+                f"/api/loops/{loop['id']}/logs",
+                json={"result": "hold", "date": (today - timedelta(days=offset)).isoformat()},
+            )
+
+        detail = actor.get(f"/api/weaknesses/{weakness['id']}").json()
+        item = detail["loops"][0]
+        assert item["hold_rate_7d"] == 100
+        assert item["hold_rate_prev_7d"] == 50
+        assert item["trend_delta"] == 50

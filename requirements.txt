@@ -15,3 +15,6 @@ python-dotenv==1.0.1
 # 缺了它 zoneinfo.ZoneInfo("Asia/Shanghai") 会直接抛异常导致服务起不来。
 # 在正常的 Ubuntu 上系统自带 tzdata，这一项不会被用到，只是兜底。
 tzdata==2024.2
+# Web Push（预约辩论提醒）。这是产品唯一的主动留存钩子，
+# 见 app/services/push.py 里关于「推送权是用户借给我们的」的说明。
+pywebpush==2.5.0

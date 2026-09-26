@@ -166,6 +166,11 @@ class User(Base):
     invite_code: Mapped[str] = mapped_column(String(16), unique=True, index=True, nullable=False)
     invited_by: Mapped[int | None] = mapped_column(ForeignKey("user.id"), nullable=True)
 
+    # 注销申请时间。按《个人信息保护法》，用户有权删除自己的数据；
+    # 这里先做「申请标记 + 人工确认」，不做即时物理删除——
+    # 弱点、破功记录这类数据对用户是有情感重量的，误删不可逆。
+    deletion_requested_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, nullable=False)
 
     profile: Mapped["UserProfile"] = relationship(
@@ -630,6 +635,70 @@ class ArchiveRecord(Base):
     restored_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
 
 
+
+# ─────────────────────────────────────────────────────────────
+# 推送订阅与辩论提醒
+#
+# 这是产品里**唯一的主动留存钩子**。
+# 方案 3.9 明确「默认不推送，唯一例外是用户主动预约的辩论提醒」——
+# 也就是说推送权是用户借给我们的，只能用在他自己约的那个时间点上。
+# 任何时候都不该用它来催事件卡、催演练、推活动。
+# ─────────────────────────────────────────────────────────────
+
+
+class PushSubscription(Base):
+    """浏览器的 Web Push 订阅信息。
+
+    一个用户可以有多条（手机 + 电脑）。endpoint 由浏览器推送服务分配，
+    全局唯一；同一 endpoint 重复订阅时更新密钥而不是新增。
+    """
+
+    __tablename__ = "push_subscription"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("user.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+
+    # 推送服务地址，长度可能很长（Chrome 的 endpoint 常在 200 字符以上）
+    endpoint: Mapped[str] = mapped_column(Text, unique=True, nullable=False)
+    p256dh: Mapped[str] = mapped_column(Text, nullable=False)
+    auth: Mapped[str] = mapped_column(Text, nullable=False)
+
+    # 仅用于在设置页展示「哪台设备」，不参与逻辑
+    user_agent: Mapped[str] = mapped_column(String(255), default="", nullable=False)
+
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, nullable=False)
+    last_used_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
+    # 推送服务返回 404/410 说明订阅已失效，标记后不再重试
+    failed_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
+
+
+class DebateReminder(Base):
+    """用户主动预约的辩论提醒。"""
+
+    __tablename__ = "debate_reminder"
+    __table_args__ = (Index("ix_reminder_status_time", "status", "remind_at"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("user.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    room_id: Mapped[int] = mapped_column(
+        ForeignKey("debate_room.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+
+    # 到点时间（UTC 存储，用户看到的是本地时间）
+    remind_at: Mapped[datetime] = mapped_column(UTCDateTime, index=True, nullable=False)
+    # pending | sent | cancelled | failed
+    status: Mapped[str] = mapped_column(String(16), default="pending", nullable=False)
+    note: Mapped[str] = mapped_column(String(120), default="", nullable=False)
+
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, nullable=False)
+    sent_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
 __all__ = [
     "utcnow",
     "WeaknessStatus",
@@ -663,4 +732,6 @@ __all__ = [
     "AIObservation",
     "AIQueue",
     "ArchiveRecord",
+    "PushSubscription",
+    "DebateReminder",
 ]

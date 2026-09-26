@@ -128,6 +128,7 @@ async def list_weaknesses(
     stats = await loop_service.weakness_stats(session, ids)
     drills = await loop_service.drill_counts(session, ids)
     plans = await loop_service.plan_counts(session, ids)
+    trends = await loop_service.weakness_trends(session, ids)
 
     groups: dict[str, list] = {
         "ai_candidate": [],
@@ -145,6 +146,7 @@ async def list_weaknesses(
             hold_rate=st.rate,
             plan_count=plans.get(card.id, 0),
             drill_count=drills.get(card.id, 0),
+            trend=trends.get(card.id),
         )
         groups.setdefault(card.status, []).append(payload)
 
@@ -199,7 +201,10 @@ async def get_weakness(
         .order_by(WeaknessLoop.id.desc())
     )
     loop_rows = list(loops.scalars().all())
-    loop_stats_map = await loop_service.loop_stats(session, [lp.id for lp in loop_rows])
+    loop_id_list = [lp.id for lp in loop_rows]
+    loop_stats_map = await loop_service.loop_stats(session, loop_id_list)
+    loop_trend_map = await loop_service.loop_trends(session, loop_id_list)
+    weakness_trend_map = await loop_service.weakness_trends(session, [card.id])
 
     loop_payload = []
     for lp in loop_rows:
@@ -214,6 +219,7 @@ async def get_weakness(
                 hold_rate=lst.rate,
                 advantages=advantages,
                 principles=principles,
+                trend=loop_trend_map.get(lp.id),
             )
         )
 
@@ -225,6 +231,7 @@ async def get_weakness(
             hold_rate=st.rate,
             plan_count=plans,
             drill_count=drills,
+            trend=weakness_trend_map.get(card.id),
         ),
         "loops": loop_payload,
         "suggest_downgrade": loop_service.should_suggest_downgrade(st),
@@ -452,6 +459,7 @@ async def update_loop(
     await session.refresh(loop)
 
     st = (await loop_service.loop_stats(session, [loop.id])).get(loop.id, Stats())
+    tr = (await loop_service.loop_trends(session, [loop.id])).get(loop.id)
     advantages, principles = await loop_service.load_linked_assets(session, loop)
 
     return {
@@ -463,6 +471,7 @@ async def update_loop(
             hold_rate=st.rate,
             advantages=advantages,
             principles=principles,
+            trend=tr,
         )
     }
 
@@ -503,6 +512,7 @@ async def create_log(
     )
 
     st = (await loop_service.loop_stats(session, [loop.id])).get(loop.id, Stats())
+    tr = (await loop_service.loop_trends(session, [loop.id])).get(loop.id)
     await session.commit()
     await session.refresh(log)
     await session.refresh(loop)
@@ -512,6 +522,9 @@ async def create_log(
         "hold_rate_30d": st.rate,
         "trigger_count_30d": st.trigger_count,
         "loop_status": loop.status,
+        "hold_rate_7d": tr.rate_7d if tr else None,
+        "hold_rate_prev_7d": tr.rate_prev_7d if tr else None,
+        "trend_delta": tr.delta if tr else None,
     }
 
     if loop_service.should_suggest_downgrade(st):
@@ -537,12 +550,16 @@ async def list_logs(
     loop, _card = await _get_owned_loop(session, loop_id, user)
     logs = await loop_service.recent_logs(session, loop.id, limit=min(limit, 100))
     st = (await loop_service.loop_stats(session, [loop.id])).get(loop.id, Stats())
+    tr = (await loop_service.loop_trends(session, [loop.id])).get(loop.id)
 
     return {
         "logs": [log_out(item) for item in logs],
         "hold_rate_30d": st.rate,
         "trigger_count_30d": st.trigger_count,
         "hold_count_30d": st.hold_count,
+        "hold_rate_7d": tr.rate_7d if tr else None,
+        "hold_rate_prev_7d": tr.rate_prev_7d if tr else None,
+        "trend_delta": tr.delta if tr else None,
     }
 
 
@@ -581,7 +598,9 @@ async def list_loops(
     if not rows:
         return {"loops": [], "total": 0}
 
-    stats_map = await loop_service.loop_stats(session, [lp.id for lp, _ in rows])
+    loop_id_list = [lp.id for lp, _ in rows]
+    stats_map = await loop_service.loop_stats(session, loop_id_list)
+    trend_map = await loop_service.loop_trends(session, loop_id_list)
 
     payload = []
     for loop, card in rows:
@@ -593,6 +612,7 @@ async def list_loops(
                 trigger_count=st.trigger_count,
                 hold_count=st.hold_count,
                 hold_rate=st.rate,
+                trend=trend_map.get(loop.id),
             )
         )
 

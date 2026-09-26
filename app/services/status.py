@@ -25,7 +25,7 @@ from app.models import (
     WeaknessLoop,
 )
 from app.services import observations as observation_service
-from app.services.loops import loop_stats
+from app.services.loops import loop_stats, loop_trends
 from app.utils import iso_utc, local_today, weekday_cn
 
 TODAY_LOOPS_LIMIT = 2
@@ -103,12 +103,15 @@ async def get_today_loops(session: AsyncSession, user_id: int) -> list[dict]:
     if not pairs:
         return []
 
-    stats = await loop_stats(session, [loop.id for loop, _ in pairs])
+    loop_ids = [loop.id for loop, _ in pairs]
+    stats = await loop_stats(session, loop_ids)
+    trends = await loop_trends(session, loop_ids)
 
     items = []
     for loop, weakness in pairs:
         st = stats.get(loop.id)
-        rate = st.rate if st else 0
+        rate = st.rate if st else None
+        trend = trends.get(loop.id)
         items.append(
             {
                 "loop_id": loop.id,
@@ -117,11 +120,20 @@ async def get_today_loops(session: AsyncSession, user_id: int) -> list[dict]:
                 "weakness_name": weakness.name,
                 "hold_rate_30d": rate,
                 "trigger_count_30d": st.trigger_count if st else 0,
-                "rate_bucket": st.bucket if st else "low",
+                "rate_bucket": st.bucket if st else None,
+                "hold_rate_7d": trend.rate_7d if trend else None,
+                "hold_rate_prev_7d": trend.rate_prev_7d if trend else None,
+                "trend_delta": trend.delta if trend else None,
             }
         )
 
-    items.sort(key=lambda item: (item["hold_rate_30d"], item["loop_id"]))
+    # 还没有数据的回环排最前：对新建回环的用户来说，
+    # 它是唯一一条，必须出现；对老用户来说，未练过的回环也是待办。
+    # 其余按撑住率升序——最该练的排最前。
+    items.sort(key=lambda item: (
+        -1 if item["hold_rate_30d"] is None else item["hold_rate_30d"],
+        item["loop_id"],
+    ))
     return items[:TODAY_LOOPS_LIMIT]
 
 

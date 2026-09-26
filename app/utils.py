@@ -93,18 +93,25 @@ def truncate(text: str, limit: int) -> str:
     return text[: limit - 1] + "…"
 
 
-def hold_rate(hold: int, total: int) -> int:
-    """撑住率百分比。无触发时返回 0。
+def hold_rate(hold: int, total: int) -> int | None:
+    """撑住率百分比。**无触发数据时返回 None，不是 0。**
+
+    这个区别至关重要：0% 的含义是「每次都破功」，而 None 的含义是
+    「还没有数据」。把两者都渲染成 0%，会让刚建好回环的新用户
+    一进门就看到 0% —— 那是在告诉他「你一直在失败」，
+    而他其实一次都还没练过。
 
     方案 3.3：不用模糊分数，用「近 30 天撑住率」。
     """
     if total <= 0:
-        return 0
+        return None
     return round(hold * 100 / total)
 
 
-def rate_bucket(rate: int) -> str:
-    """撑住率档位，与配色方案第四章一一对应。"""
+def rate_bucket(rate: int | None) -> str | None:
+    """撑住率档位，与配色方案第四章一一对应。无数据返回 None。"""
+    if rate is None:
+        return None
     if rate < 40:
         return "low"  # #B85C5C 破功多，还在挣扎
     if rate < 60:

@@ -47,9 +47,10 @@ def weakness_out(
     *,
     trigger_count: int = 0,
     hold_count: int = 0,
-    hold_rate: int = 0,
+    hold_rate: int | None = None,
     plan_count: int = 0,
     drill_count: int = 0,
+    trend: "object | None" = None,
 ) -> dict:
     """弱点卡。
 
@@ -67,7 +68,10 @@ def weakness_out(
         "source_id": card.source_id,
         "trigger_count_30d": trigger_count,
         "hold_count_30d": hold_count,
+        # None 表示「还没有触发数据」，前端显示「--」而不是 0%。
+        # 0 的含义是「每次都破功」，两者绝不能混为一谈。
         "hold_rate_30d": hold_rate,
+        **_trend_fields(trend),
         "plan_count": plan_count,
         "drill_count": drill_count,
         "days_since_created": days_since(card.created_at),
@@ -84,9 +88,10 @@ def loop_out(
     weakness: WeaknessCard | None = None,
     trigger_count: int = 0,
     hold_count: int = 0,
-    hold_rate: int = 0,
+    hold_rate: int | None = None,
     advantages: list[Advantage] | None = None,
     principles: list[Principle] | None = None,
+    trend: "object | None" = None,
 ) -> dict:
     return {
         "id": loop.id,
@@ -105,6 +110,7 @@ def loop_out(
         "trigger_count_30d": trigger_count,
         "hold_count_30d": hold_count,
         "hold_rate_30d": hold_rate,
+        **_trend_fields(trend),
         "created_at": iso_utc(loop.created_at),
         "updated_at": iso_utc(loop.updated_at),
     }
@@ -262,6 +268,21 @@ def review_out(
 # ─────────────────────────────────────────────────────────────
 # 内部
 # ─────────────────────────────────────────────────────────────
+
+
+def _trend_fields(trend) -> dict:
+    """本周 vs 上周的对比字段。
+
+    任一周没有触发数据时 delta 为 None —— 前端据此**不显示**趋势，
+    而不是显示一个「↑ 0%」制造「我在原地踏步」的错觉。
+    """
+    if trend is None:
+        return {"hold_rate_7d": None, "hold_rate_prev_7d": None, "trend_delta": None}
+    return {
+        "hold_rate_7d": trend.rate_7d,
+        "hold_rate_prev_7d": trend.rate_prev_7d,
+        "trend_delta": trend.delta,
+    }
 
 
 def _days_until(value: datetime | None) -> int | None:

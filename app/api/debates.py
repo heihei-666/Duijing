@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
@@ -30,13 +31,14 @@ from app.models import (
     WeaknessCard,
 )
 from app.services import debate as debate_service
+from app.services import push as push_service
 from app.services.ratelimit import ai_limiter, debate_limiter, enforce
 from app.services.serializers import (
     debate_room_out,
     message_out,
     review_out,
 )
-from app.utils import generate_token
+from app.utils import generate_token, now_utc, to_utc
 
 logger = logging.getLogger("duijing.api.debate")
 
@@ -63,6 +65,19 @@ class CreateDebatePayload(BaseModel):
 
 class MessagePayload(BaseModel):
     content: str = Field(..., max_length=2000)
+
+
+class ReminderPayload(BaseModel):
+    """预约提醒。
+
+    支持两种写法：给 preset（推荐，前端一个按钮就够）或给明确的 remind_at。
+    预设存在的理由是降低门槛——让用户在手机上挑日期时间是给「预约」
+    这件事本身增加摩擦，而预约正是我们要鼓励的行为。
+    """
+
+    preset: str = Field("", max_length=32)
+    remind_at: str | None = Field(None, max_length=40)
+    note: str = Field("", max_length=120)
 
 
 # ── 权限 ──────────────────────────────────────────────────────
@@ -474,6 +489,81 @@ def _sse(event: str, payload: dict) -> dict:
 
 
 # ── 结束 / 暂停 / 邀请 ────────────────────────────────────────
+
+
+# ── 预约提醒（方案 3.9 里唯一的主动触达通道） ──────────────
+
+
+@router.get("/{room_id}/reminder")
+async def get_reminder(
+    room_id: int,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    await load_room_for_user(session, room_id, user)
+    reminder = await push_service.pending_reminder(session, user_id=user.id, room_id=room_id)
+    return {"reminder": await push_service.reminder_out(reminder, room_id)}
+
+
+@router.post("/{room_id}/reminder")
+async def set_reminder(
+    room_id: int,
+    payload: ReminderPayload,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """预约一次辩论提醒。"""
+    await load_room_for_user(session, room_id, user)
+
+    if payload.preset:
+        if payload.preset not in push_service.REMINDER_PRESETS:
+            raise HTTPException(status_code=400, detail="未知的提醒时间")
+        remind_at = push_service.resolve_preset(payload.preset)
+    elif payload.remind_at:
+        try:
+            remind_at = datetime.fromisoformat(payload.remind_at.replace("Z", "+00:00"))
+        except ValueError:
+            raise HTTPException(status_code=400, detail="时间格式不正确")
+        remind_at = to_utc(remind_at)
+    else:
+        raise HTTPException(status_code=400, detail="请选择提醒时间")
+
+    if remind_at is None:
+        raise HTTPException(status_code=400, detail="无法解析提醒时间")
+
+    now = now_utc()
+    if remind_at <= now:
+        raise HTTPException(status_code=400, detail="提醒时间必须晚于现在")
+    # 上限 30 天：再远就没有意义了，多半是误输入
+    if remind_at > now + timedelta(days=30):
+        raise HTTPException(status_code=400, detail="提醒时间最多只能预约 30 天内")
+
+    devices = await push_service.device_count(session, user.id)
+    reminder = await push_service.upsert_reminder(
+        session, user_id=user.id, room_id=room_id, remind_at=remind_at, note=payload.note
+    )
+    await session.commit()
+    await session.refresh(reminder)
+
+    return {
+        "reminder": await push_service.reminder_out(reminder, room_id),
+        # 没有订阅设备时如实告知，而不是让用户以为约好了却收不到。
+        # 前端据此提示「还需要开启通知」。
+        "device_count": devices,
+        "will_notify": devices > 0,
+    }
+
+
+@router.delete("/{room_id}/reminder")
+async def delete_reminder(
+    room_id: int,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    await load_room_for_user(session, room_id, user)
+    cancelled = await push_service.cancel_reminder(session, user_id=user.id, room_id=room_id)
+    await session.commit()
+    return {"ok": True, "cancelled": cancelled}
 
 
 @router.post("/{room_id}/finish")
