@@ -71,6 +71,27 @@ timedatectl set-timezone Asia/Shanghai 2>/dev/null || ln -snf /usr/share/zoneinf
 # ─────────────────────────────────────────────────────────────
 # 3. 依赖
 # ─────────────────────────────────────────────────────────────
+# ── pip 镜像 ──
+#
+# 大陆服务器访问 pypi.org 实测要 12 秒（有时直接超时），
+# 表现为 `pip install` 报 "Could not find a version that satisfies ...
+# (from versions: none)" —— 看起来像包不存在，实际是源太慢。
+# 阿里云镜像约 1.6 秒，快 7 倍。
+#
+# 用 PIP_INDEX_URL 环境变量可以覆盖；设为 "default" 表示不改动。
+if [ "${PIP_INDEX_URL:-}" != "default" ]; then
+  PIP_INDEX="${PIP_INDEX_URL:-https://mirrors.aliyun.com/pypi/simple/}"
+  if [ ! -f /etc/pip.conf ]; then
+    log "配置 pip 镜像：$PIP_INDEX"
+    cat > /etc/pip.conf <<PIPCONF
+[global]
+index-url = $PIP_INDEX
+trusted-host = $(echo "$PIP_INDEX" | awk -F/ '{print $3}')
+timeout = 60
+PIPCONF
+  fi
+fi
+
 log "安装系统依赖"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
