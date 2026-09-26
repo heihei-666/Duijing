@@ -27,7 +27,10 @@ export default defineConfig({
     react(),
     VitePWA({
       registerType: 'autoUpdate',
-      injectRegister: 'auto',
+      // 不再注入裸注册脚本：main.tsx 里用 virtual:pwa-register 显式接管，
+      // 这样才能拿到 onNeedRefresh 回调去刷新页面。
+      // 自动注入的那段只有 register()，新版本部署后用户看不到变化。
+      injectRegister: false,
       manifest: false,
       includeAssets: ['favicon.svg', 'icons/icon.svg', 'icons/maskable.svg'],
       workbox: {
