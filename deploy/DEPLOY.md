@@ -243,3 +243,80 @@ systemctl restart duijing
 > **阿里云安全组是最常见的坑**：轻量应用服务器默认只放行了 22 和部分端口，
 > 必须去控制台「防火墙」里手动放行 **80** 和 **443**，否则本机 `curl 127.0.0.1` 正常、
 > 外网却完全连不上，很容易误判成应用没起来。
+
+---
+
+## 10. 实战记录：duijing.xyz（2026-09-26 首次部署）
+
+这一节记录**真实部署中实际踩到的坑**，全部已在脚本里修掉。
+换新服务器部署时如果遇到类似现象，先看这里。
+
+### 10.1 环境实况
+
+| 项 | 值 |
+|---|---|
+| 服务器 | 阿里云轻量应用服务器，**上海**（大陆节点） |
+| 配置 | 2 核 / 1.6G 内存 / 40G 磁盘 / 已配 2G Swap |
+| 系统 | Ubuntu 24.04.2 LTS，Python 3.12.3 |
+| Nginx | **1.24.0**（注意版本，见 10.3） |
+| 登录用户 | `admin`（**不是 root**），有免密 sudo |
+| 域名 | duijing.xyz + www.duijing.xyz，Let's Encrypt，自动续期 |
+
+### 10.2 踩到的坑与修法
+
+| # | 现象 | 根因 | 修法 |
+|---|---|---|---|
+| 1 | `git clone` 报 "destination path already exists and is not an empty directory" | `useradd -m -d /opt/duijing` 把**家目录**建成了应用目录 | 改用 `useradd -r -M`，且不在克隆前创建该目录 |
+| 2 | `git clone` 报 Permission denied | `/opt/duijing` 已由运维创建、属主是登录用户，`app` 无写权限 | 克隆前先 `chown` 给应用用户 |
+| 3 | systemd 服务起不来 | `useradd -r` 不保证创建同名组，而单元里写了 `Group=app` | `useradd -r -U` 显式建组 |
+| 4 | **脚本静默卡在「取不到公网 IP」** | 用了 `api.ipify.org`，它在大陆服务器上**完全不可达** | 改为多源回退：`ip.3322.net` → `ifconfig.me` → `ipinfo.io` → `api.ipify.org` |
+| 5 | 更新代码时报 `detected dubious ownership` | 仓库属主是 `app`，执行 `git` 的是 `admin` | 给应用用户加 `safe.directory` |
+| 6 | **证书签发成功，但 Nginx 配置切换失败** | 模板里的 `http2 on;` 是 nginx **1.25.1+** 的独立指令，1.24 只能写 `listen 443 ssl http2;` | 按 nginx 版本自适应改写；并让 `nginx -t` 失败时**自动回滚** |
+| 7 | 判断 443 是否被防火墙拦截时容易误判 | 「连接被拒绝」（秒拒）和「连接超时」是两回事 | 用未放行的端口做对照组：秒拒=防火墙已放行只是没人监听；超时=真被拦 |
+
+> **第 6 条最危险**：坏配置落在 `sites-enabled/` 上时 nginx 还跑着旧配置看似正常，
+> 但**一旦重启就再也起不来**。所以脚本现在会在 `nginx -t` 失败时立刻回滚。
+
+### 10.3 关于 `http2` 的版本差异
+
+```nginx
+# nginx >= 1.25.1
+listen 443 ssl;
+http2 on;
+
+# nginx <= 1.25.0（Ubuntu 22.04 的 1.18、24.04 的 1.24 都属于这档）
+listen 443 ssl http2;
+```
+
+写错会直接 `unknown directive "http2"`。`enable-https.sh` 现在会自动判断版本。
+
+### 10.4 DNS 传播的观察
+
+新注册的域名，注册局把 NS 委派发布到顶级域 zone 需要时间。本次实测：
+
+- 域名注册于 `00:23Z`，权威 NS 立刻就有 A 记录
+- 但顶级域返回 **NXDOMAIN** 直到约 `01:40Z`（约 **75 分钟**）
+- 公共解析器之间**传播不同步**：某时刻 `1.1.1.1` 能解析裸域而 `8.8.8.8` 不能，反之亦然
+
+**判断是否已生效要以公共解析器为准，不能只看权威 NS。**
+`deploy/watch-dns-and-enable-https.sh` 就是为此写的：
+每 2 小时检查一次，两个域名都生效后自动签发证书，成功后自我移除。
+
+> 重试间隔别设太短：Let's Encrypt 对同一域名有失败次数限制（每小时 5 次），
+> 5 分钟一次会在半小时内耗尽配额。
+
+### 10.5 备案提醒
+
+服务器在大陆节点，域名对外提供 Web 服务按规需要 ICP 备案。
+本次部署时用 `Host` 头实测未被拦截，但**阿里云可能随时启用拦截**。
+
+判断方法：如果某天站点突然打不开，而服务器本身正常
+（`curl 127.0.0.1` 有响应、`systemctl status duijing` 是 active），
+先确认备案状态，不要急着重装服务。
+
+### 10.6 部署完成后应删掉的东西
+
+```bash
+# 收回部署者的 SSH 访问权：删掉 authorized_keys 里那一行
+sudo nano ~/.ssh/authorized_keys
+```
