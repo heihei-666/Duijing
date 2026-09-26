@@ -226,13 +226,18 @@ async def create_debate(
         raise HTTPException(status_code=400, detail="辩题生成失败，请手动输入辩题")
 
     # source_type 没显式给就按上下文推断，避免明明是从回环起的辩
-    # 却记成 manual——那会让「我这段时间在练什么」这类统计失真
+    # 却记成 manual——那会让「我这段时间在练什么」这类统计失真。
+    #
+    # 只在 manual 时推断：显式传了 event_card / weakness 就尊重调用方，
+    # 不要自作聪明去覆盖。
+    #
+    # （曾有一行 `elif payload.source_id and payload.source_type == "event_card"`
+    #   试图在这里也识别事件卡来源，但那两个条件互斥、永远不会执行，
+    #   是纯死代码。事件卡来源必须由调用方显式声明 source_type，
+    #   靠 source_id 猜不出来——它可能指向任何一种对象。）
     source_type = payload.source_type
-    if source_type == "manual":
-        if loop_id or weakness_id:
-            source_type = "weakness"
-        elif payload.source_id and payload.source_type == "event_card":
-            source_type = "event_card"
+    if source_type == "manual" and (loop_id or weakness_id):
+        source_type = "weakness"
 
     room = DebateRoom(
         user_id=user.id,
