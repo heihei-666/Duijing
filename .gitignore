@@ -24,6 +24,11 @@ dist/
 .vite/
 *.local
 
+# ── 端到端验收的产物（截图与结果 JSON，脚本本身要入库）──
+e2e/shots/
+e2e/*-result.json
+e2e/result.json
+
 # ── 编辑器 / 系统 ─────────────────────────────────────
 .DS_Store
 .idea/
