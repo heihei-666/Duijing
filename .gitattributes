@@ -1,0 +1,12 @@
+# 换行符统一为 LF。
+#
+# 背景：本项目部署在 Linux。Windows 上系统级 core.autocrlf=true 会把
+# deploy/*.sh 之类的脚本检出成 CRLF，工作区与仓库不一致。一旦用 scp/rsync
+# 直接把工作区文件传到服务器，脚本会因为 \r 报 `$'\r': command not found`。
+# 用 .gitattributes 固定住，换任何机器检出行为都一致。
+#
+# 二进制文件由 text=auto 自动识别，不受 eol 影响。
+* text=auto eol=lf
+
+# 显式再声明一次：这两个目录是直接要在 Linux 上执行的
+*.sh text eol=lf
