@@ -25,9 +25,10 @@ PyJWT==2.10.1
 bcrypt==4.2.1
 python-multipart==0.0.20
 sse-starlette==2.2.1
-APScheduler==3.11.0
+apscheduler==3.11.0
 httpx==0.28.1
-python-dotenv==1.0.1
+# 注意：**不要**加 python-dotenv。它曾经在列表里但全仓库没有一处 import
+# （配置读取是 app/config.py 自己用 os.getenv 做的），属于无用依赖，已移除。
 # 时区数据库兜底。
 # Alpine/slim 镜像与部分容器没有 /usr/share/zoneinfo，
 # 缺了它 zoneinfo.ZoneInfo("Asia/Shanghai") 会直接抛异常导致服务起不来。
@@ -36,3 +37,7 @@ tzdata==2024.2
 # Web Push（预约辩论提醒）。这是产品唯一的主动留存钩子，
 # 见 app/services/push.py 里关于「推送权是用户借给我们的」的说明。
 pywebpush==2.5.0
+# py-vapid 目前是 pywebpush 的传递依赖（实测 pywebpush 2.5.0 的 Requires 含 py-vapid），
+# 但 app/services/push.py:63 是**直接** import 它的。直接依赖就该显式声明 ——
+# 否则上游哪天把这条去掉，我们会在运行时的 VAPID 密钥生成那里才炸。
+py-vapid==1.9.4

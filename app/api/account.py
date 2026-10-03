@@ -14,13 +14,14 @@ from __future__ import annotations
 import logging
 from datetime import date, datetime
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import get_session
-from app.deps import get_current_user
+from app.deps import ensure_profile, get_current_user
 from app.models import (
     Advantage,
     AIObservation,
@@ -43,6 +44,67 @@ from app.utils import iso_utc, now_utc
 logger = logging.getLogger("duijing.api.account")
 
 router = APIRouter(prefix="/api/account", tags=["账号数据"])
+
+# 方案 3.1 的「AI 风格按用户水平调节」只有三个档位
+VALID_LEVELS = {"novice", "intermediate", "advanced"}
+
+
+class ProfilePayload(BaseModel):
+    """可改的用户偏好。
+
+    ⚠️ 这个接口是**补上一条断掉的线**：在此之前 `user_profile.level`
+    只在建档案时写过默认值 `novice`，全仓库没有第二处赋值，
+    前端也从来没读过它 —— 于是「AI 风格按水平调节」（方案 3.1）虽然
+    在提示词层实现了（`prompts._level_cn`），却永远停在「新手」档，
+    是个够不着的开关。`notify_debate_reminder` / `auto_scan_event_cards`
+    两列同样是死的。
+    """
+
+    level: str | None = Field(None, max_length=16)
+    notify_debate_reminder: bool | None = None
+    auto_scan_event_cards: bool | None = None
+
+
+@router.get("/profile")
+async def read_profile(
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    profile = await ensure_profile(session, user)
+    await session.commit()
+    return {"profile": profile_out(profile)}
+
+
+@router.patch("/profile")
+async def update_profile(
+    payload: ProfilePayload,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    if payload.level is not None and payload.level not in VALID_LEVELS:
+        raise HTTPException(status_code=400, detail="水平档位取值不合法")
+
+    profile = await ensure_profile(session, user)
+
+    if payload.level is not None:
+        profile.level = payload.level
+    if payload.notify_debate_reminder is not None:
+        profile.notify_debate_reminder = payload.notify_debate_reminder
+    if payload.auto_scan_event_cards is not None:
+        profile.auto_scan_event_cards = payload.auto_scan_event_cards
+
+    await session.commit()
+    await session.refresh(profile)
+    return {"profile": profile_out(profile)}
+
+
+def profile_out(profile: UserProfile) -> dict:
+    return {
+        "level": profile.level,
+        "notify_debate_reminder": profile.notify_debate_reminder,
+        "auto_scan_event_cards": profile.auto_scan_event_cards,
+        "updated_at": iso_utc(profile.updated_at),
+    }
 
 
 def _row(obj, fields: tuple[str, ...]) -> dict:

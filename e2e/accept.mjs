@@ -82,9 +82,14 @@ R.roomUrl = page.url();
 R.twoClicksToDebateMs = Date.now() - clickT0;
 log(`   ✅ 选了「${R.stanceChosen}」，进入 ${R.roomUrl}（共 ${R.twoClicksToDebateMs}ms）`);
 
-// 等房间真正渲染完：出现「共 N 轮」这个只有拿到数据后才会渲染的标记
+// 等房间真正渲染完：出现轮次指示这个只有拿到数据后才会渲染的标记。
+//
+// 正则必须覆盖 RoomHeader.roundLabel() 的全部形态，只写「共 N 轮」会漏掉
+// 「开场 · 计划 N 轮」——那正是刚建好房间时的状态，于是每次都白等满 30 秒超时。
+const ROUND_LABEL = /(第\s*\d+\s*轮|共\s*\d+\s*轮|计划\s*\d+\s*轮|已结束)/;
 await page.waitForFunction(
-  () => /共\s*\d+\s*轮/.test(document.body.innerText || ''),
+  (src) => new RegExp(src).test(document.body.innerText || ''),
+  ROUND_LABEL.source,
   { timeout: 30000 },
 ).catch(() => {});
 await page.waitForTimeout(800);
@@ -92,6 +97,10 @@ await page.screenshot({ path: `${SHOTS}/03-debate-room.png`, fullPage: true });
 const roomText = (await page.textContent('body')) || '';
 R.roomChars = roomText.length;
 R.aiOpening = roomText.includes('AI') && (roomText.includes('开场') || roomText.includes('开场白'));
+// ⚠️ 这两个字段此前**被读取却从未赋值**，所以那两行日志永远打印 ❌ ——
+// 一个稳定的假阴性，而且因为看起来「只是没通过」很容易被忽略。现在真的去查。
+R.roomHasInput = (await page.locator('textarea').count()) > 0;
+R.roomHasRounds = ROUND_LABEL.test(roomText);
 log(`   辩论房：AI 开场白 ${R.aiOpening ? '✅' : '❌'}　输入区 ${R.roomHasInput ? '✅' : '❌'}　轮次指示 ${R.roomHasRounds ? '✅' : '❌'}`);
 
 // ── ④ 第二条路径：记一笔 ──
