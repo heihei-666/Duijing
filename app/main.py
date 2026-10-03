@@ -19,6 +19,7 @@ from fastapi.staticfiles import StaticFiles
 from app import __version__
 from app.api import (
     account,
+    admin,
     advantages,
     archive,
     auth,
@@ -120,6 +121,7 @@ app.include_router(observations.router)
 app.include_router(archive.router)
 app.include_router(push.router)
 app.include_router(account.router)
+app.include_router(admin.router)
 
 
 @app.get("/api/health", tags=["系统"])

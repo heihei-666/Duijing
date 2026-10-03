@@ -14,6 +14,7 @@ from app.config import settings
 from app.db import get_session
 from app.models import User, UserProfile
 from app.security import decode_access_token
+from app.services import ai_metrics
 
 
 def extract_token(request: Request) -> str | None:
@@ -80,6 +81,23 @@ async def get_current_user(
     user = await session.scalar(select(User).where(User.id == user_id))
     if not user:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="用户不存在")
+
+    # 让这一层「当前用户」对 AI 观测可见。
+    # 依赖与端点函数跑在同一个 task 上下文里，所以 ContextVar 读得到；
+    # 定时任务里没人设它，取到 None 也是对的。
+    # 观测数据没有 user_id 就分不出「谁的调用烧了钱」，这一步很便宜。
+    ai_metrics.set_current_user_id(user.id)
+    return user
+
+
+async def require_admin(user: User = Depends(get_current_user)) -> User:
+    """管理员专用接口的守卫。
+
+    第一个注册的用户自动是管理员（`auth.py` 里的引导逻辑），
+    所以单实例自用场景下不会有「没人能管」的问题。
+    """
+    if not user.is_admin:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="需要管理员权限")
     return user
 
 

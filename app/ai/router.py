@@ -18,11 +18,14 @@ from __future__ import annotations
 import json
 import logging
 import re
+from collections.abc import AsyncIterator
 
 from app.ai.base import AIError, AIProvider, AIResponse, BaseProvider, ChatMessage
 from app.ai.mock import MockProvider
+from app.ai.prompts import PROMPT_VERSION
 from app.ai.providers import DeepSeekProvider, MiMoProvider
 from app.config import settings
+from app.services import ai_metrics
 
 logger = logging.getLogger("duijing.ai")
 
@@ -131,10 +134,71 @@ async def complete(task: str, messages: list[ChatMessage], **kwargs) -> AIRespon
     #
     # 「没配 Key」是另一回事：那属于明确的降级模式，在选 Provider 时就决定了，
     # 并且可以通过 GET /api/health 的 ai.degraded 看到。
-    return await provider.complete(messages, **kwargs)
+    with ai_metrics.timer() as t:
+        try:
+            response = await provider.complete(messages, **kwargs)
+        except Exception as exc:  # noqa: BLE001 - 记录后原样抛出，不改变行为
+            ai_metrics.record_ai_call(
+                task=task,
+                provider=provider.name,
+                model=provider.default_model,
+                prompt_version=PROMPT_VERSION,
+                latency_ms=t.elapsed_ms,
+                status="error",
+                error=str(exc),
+            )
+            raise
+
+    usage = response.usage
+    ai_metrics.record_ai_call(
+        task=task,
+        provider=response.provider or provider.name,
+        model=usage.model or provider.default_model,
+        prompt_version=PROMPT_VERSION,
+        prompt_tokens=usage.prompt_tokens,
+        completion_tokens=usage.completion_tokens,
+        cached_tokens=usage.cached_tokens,
+        latency_ms=t.elapsed_ms,
+    )
+    return response
 
 
-def stream(task: str, messages: list[ChatMessage], **kwargs):
+async def _instrumented_stream(gen, *, task: str, provider: AIProvider, t) -> AsyncIterator[str]:
+    """给流式调用套一层计时。
+
+    需要包装而不是简单包一层 try/finally，因为 `stream()` 返回的是**惰性**生成器：
+    真正的网络请求发生在第一次迭代时，所以计时必须从迭代开始算。
+    """
+    status, error = "ok", None
+    try:
+        async for piece in gen:
+            # 第一个块到达的时刻 = TTFT
+            if t.ttft_ms is None:
+                t.first_token()
+            yield piece
+    except GeneratorExit:
+        # 客户端中途断开（关页面、切房间）。这不是错误，但值得记一笔 ——
+        # 「一轮辩论经常只收到一半就断了」是个真实的用户体验信号。
+        status = "aborted"
+        raise
+    except Exception as exc:  # noqa: BLE001
+        status, error = "error", str(exc)
+        raise
+    finally:
+        ai_metrics.record_ai_call(
+            task=task,
+            provider=provider.name,
+            model=provider.default_model,
+            prompt_version=PROMPT_VERSION,
+            latency_ms=t.elapsed_ms,
+            ttft_ms=t.ttft_ms,
+            status=status,
+            error=error,
+            streamed=True,
+        )
+
+
+def stream(task: str, messages: list[ChatMessage], **kwargs) -> AsyncIterator[str]:
     """返回异步生成器。
 
     与 complete 同理：真实模型失败时直接向上抛，
@@ -143,7 +207,11 @@ def stream(task: str, messages: list[ChatMessage], **kwargs):
     """
     provider = get_provider(task)
     kwargs.setdefault("thinking", task in THINKING_TASKS)
-    return provider.stream(messages, **kwargs)
+    # 不用 with：计时要在**迭代开始**时才启动，这里只构造
+    t = ai_metrics.timer()
+    return _instrumented_stream(
+        provider.stream(messages, **kwargs), task=task, provider=provider, t=t
+    )
 
 
 # ─────────────────────────────────────────────────────────────

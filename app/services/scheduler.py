@@ -16,6 +16,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 from app.api.advantages import archive_stale
 from app.config import settings
 from app.db import session_scope
+from app.services import ai_metrics
 from app.services import event_cards as event_card_service
 from app.services import loops as loop_service
 from app.services import observations as observation_service
@@ -90,6 +91,26 @@ async def job_purge_weaknesses() -> None:
         logger.exception("弱点清理任务失败")
 
 
+async def job_flush_ai_calls() -> None:
+    """每分钟：把内存里的 AI 调用记录批量落库。
+
+    为什么缓冲而不是当场写：AI 调用经常发生在「请求事务已 flush、
+    还没 commit」的中间态，而 SQLite 的写锁是**全局**的 —— 当场写会撞 busy_timeout。
+    缓冲 + 定时落库把写操作挪到没有请求事务的时刻，
+    代价是崩溃时最多丢 1 分钟观测数据（对观测可以接受）。
+    """
+    try:
+        if not ai_metrics.pending_count():
+            return
+        async with session_scope() as session:
+            written = await ai_metrics.flush_to_db(session)
+        if written:
+            logger.debug("AI 调用记录落库 %s 条", written)
+    except Exception:  # noqa: BLE001
+        # flush_to_db 失败时已把记录放回缓冲，下一分钟会重试
+        logger.exception("AI 调用记录落库失败（记录已放回缓冲，稍后重试）")
+
+
 # ── 调度器 ────────────────────────────────────────────────────
 
 
@@ -119,6 +140,13 @@ def start_scheduler() -> AsyncIOScheduler | None:
         misfire_grace_time=120,
     )
     scheduler.add_job(
+        job_flush_ai_calls,
+        IntervalTrigger(minutes=1),
+        id="flush_ai_calls",
+        replace_existing=True,
+        misfire_grace_time=120,
+    )
+    scheduler.add_job(
         job_expire_observations,
         IntervalTrigger(hours=1),
         id="expire_observations",
@@ -143,7 +171,8 @@ def start_scheduler() -> AsyncIOScheduler | None:
     scheduler.start()
     _scheduler = scheduler
     logger.info(
-        "定时任务已启动：提醒派发=每分钟，周扫描=%s %02d:00，观察过期=每小时，清理=每日 03:00/03:30",
+        "定时任务已启动：提醒派发=每分钟，AI 记录落库=每分钟，"
+        "周扫描=%s %02d:00，观察过期=每小时，清理=每日 03:00/03:30",
         settings.SCAN_CRON_DAY,
         settings.SCAN_CRON_HOUR,
     )

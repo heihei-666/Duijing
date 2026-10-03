@@ -705,8 +705,74 @@ class DebateReminder(Base):
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
+class AICallLog(Base):
+    """每一次模型调用的观测记录。
+
+    【为什么要有这张表】
+
+    在此之前，`AIUsage`（含 prompt/completion/cached tokens）在 provider 层
+    认真采集了，却**没有任何读取方**——没有落库、没有聚合、没有日志。
+    连带地 `AIResponse.reasoning` 没人读、`PROMPT_VERSION` 也从不下发。
+    结果就是：方案第五章的「月度成本 0.74 元」和验收记录里的
+    「0.02–0.03 元/场」全都是**人工在服务商后台看的**，系统里没有这个能力。
+
+    更要紧的是：这个项目主打的三个技术点（多模型路由、prompt 前缀缓存、
+    SSE 流式）**都无法自证**——
+      路由：两家的延迟/失败率/成本各是多少？路由错了怎么发现？
+      缓存：命中率多少？省了多少钱？
+      流式：TTFT 多少？
+    这些问题的答案全都在 `AIUsage` 里，只是被丢掉了。
+
+    这张表把它们留下来。写入走「内存缓冲 + 定时落库」（见
+    `app/services/ai_metrics.py`），**不在请求事务里写**：
+    SQLite 的写锁是全局的，而 AI 调用经常发生在请求事务已 flush、
+    尚未 commit 的中间态，直接写会撞 busy_timeout。
+    """
+
+    __tablename__ = "ai_call_log"
+    __table_args__ = (
+        Index("ix_aicall_created", "created_at"),
+        Index("ix_aicall_task_created", "task", "created_at"),
+        Index("ix_aicall_user_created", "user_id", "created_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    # 允许为空：定时任务与后台任务发起的调用没有「当前用户」
+    user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("user.id", ondelete="SET NULL"), nullable=True
+    )
+
+    # 方案 5.3 路由决策表里的任务名（debate_reply / review_card / ...）
+    task: Mapped[str] = mapped_column(String(32), nullable=False)
+    # 实际用到的 provider 名：deepseek / mimo / mock
+    provider: Mapped[str] = mapped_column(String(16), nullable=False)
+    model: Mapped[str] = mapped_column(String(64), default="", nullable=False)
+
+    # 缓存前缀的版本号。落库之后才能回答「这条观察是哪个 prompt 版本产生的」，
+    # 也才能按版本做效果对比 —— 在此之前它只是个没人用的常量。
+    prompt_version: Mapped[str] = mapped_column(String(32), default="", nullable=False)
+
+    prompt_tokens: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    completion_tokens: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    # provider 报的缓存命中 token（DeepSeek/MiMo 都是 prompt_cache_hit_tokens）
+    cached_tokens: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
+    latency_ms: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    # 首 token 延迟，只有流式调用有值
+    ttft_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    # ok | error | aborted（aborted = 客户端中途断开，SSE 常见）
+    status: Mapped[str] = mapped_column(String(16), default="ok", nullable=False)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # 流式调用标记，便于把「一个字的延迟」和「一整段的总时长」分开看
+    streamed: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, nullable=False)
+
+
 __all__ = [
     "utcnow",
+    "AICallLog",
     "WeaknessStatus",
     "Domain",
     "LoopStatus",
