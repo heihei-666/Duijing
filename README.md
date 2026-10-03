@@ -2,15 +2,18 @@
 
 [![CI](https://github.com/heihei-666/Duijing/actions/workflows/ci.yml/badge.svg)](https://github.com/heihei-666/Duijing/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Python 3.12](https://img.shields.io/badge/Python-3.12-3776AB.svg)](https://www.python.org/)
+[![React 18](https://img.shields.io/badge/React-18-61DAFB.svg)](https://react.dev/)
 
 > 用 AI 辩论房照见自己，用弱点回环改善自己。
 
-个人成长工作台。系统只做三件事：**帮用户发现弱点**（AI 辩论房 + 事件卡扫描）、
-**帮用户改善弱点**（回环 + 演练 + 撑住率）、**帮用户沉淀经验**（优势库 + 原则库）。
+<!-- 截图：把图放进 docs/screenshots/ 后，取消下面的注释（建议 4 张：首页 / 辩论房 / 复盘卡片 / 弱点墙）
+![对镜首页](docs/screenshots/01-home.png)
+-->
 
----
+## 这是什么
 
-## 核心闭环
+一个个人成长工作台。和其他「AI 聊天 + 打卡」类应用的区别在于它有一条**闭合的数据流**：
 
 ```text
 AI 辩论房 → 观察弱点/优势 → 用户确认 → 建回环 → 演练 → 撑住率达标 → 原则沉淀
@@ -18,11 +21,19 @@ AI 辩论房 → 观察弱点/优势 → 用户确认 → 建回环 → 演练 �
             事件卡记录 ←──────── 日常实战 ────────→ 破功修订
 ```
 
-## 功能模块
+**AI 不是主角，观察才是。** 你在辩论房里和 AI 就一个真实议题对辩，
+AI 全程记录你的论证结构、情绪与防御、互动策略、语言习惯，
+**但辩论过程中一个字都不说**——结束后才给一张复盘卡片和最多两条观察。
+观察以「候选」身份进入弱点墙，**要你确认才算数**。
+
+它解决的是「我知道自己有问题，但说不清是什么问题」——
+把模糊的自我感觉，变成一条可跟踪、可演练、可验证的具体弱点。
+
+## 功能
 
 | 模块 | 说明 |
 |---|---|
-| **AI 辩论房** | 回合制 4–8 轮，SSE 流式；AI 兼辩手与观察者；观察只在结束后给 |
+| **AI 辩论房** | 回合制 4–8 轮，SSE 流式；AI 兼辩手与观察者，观察只在结束后给 |
 | **弱点墙** | 四区：AI 候选 / 观察中 / 改善中 / 暂存；便签视觉区分状态 |
 | **回环** | 弱点的 SOP。对话式或表单启动；撑住率 = 近 30 天撑住 / 触发 |
 | **事件卡** | 一句话记录实战；支持完整模式与极简模式 |
@@ -31,383 +42,120 @@ AI 辩论房 → 观察弱点/优势 → 用户确认 → 建回环 → 演练 �
 | **状态栏** | 首页四块：日期+精力+连续天数 / 今天练什么 / AI 昨天观察到 / 两个入口 |
 | **垃圾桶** | 弱点 60 天倒计时；优势/原则可恢复；观察候选不恢复 |
 
----
-
-## 技术栈
-
-**前端**：React 18 + Vite + TypeScript + Tailwind CSS 3.4 + Zustand + React Router + PWA + SSE
-**后端**：Python 3.12 + FastAPI + Uvicorn + SQLAlchemy 2.0 (async) + SQLite(WAL) + APScheduler
-**AI**：DeepSeek（辩论，深度推理）+ MiMo（复盘/辩题/扫描，结构化短输出）
-**部署**：阿里云 2C2G + Nginx + systemd
-
-## 目录结构
-
-```
-.
-├── app/                    # 后端
-│   ├── main.py             # FastAPI 入口
-│   ├── config.py           # 全部配置走环境变量
-│   ├── db.py               # SQLite + WAL，PRAGMA 按方案配置
-│   ├── models.py           # 19 张表
-│   ├── security.py         # bcrypt + JWT
-│   ├── deps.py             # httpOnly Cookie 认证
-│   ├── utils.py            # 时区、撑住率、邀请码
-│   ├── ai/                 # AI 可插拔层
-│   │   ├── base.py         #   Provider 协议
-│   │   ├── providers.py    #   DeepSeek / MiMo（OpenAI 兼容）
-│   │   ├── structured.py   #   ★ 结构化输出：schema 校验 + 失败重试一次
-│   │   ├── mock.py         #   Mock：无 Key 也能跑通全链路
-│   │   ├── prompts.py      #   ★ 缓存前缀组装（顺序不可变）+ prompt 版本管理
-│   │   └── router.py       #   ★ 路由决策表 + JSON 解析
-│   ├── services/           # 业务逻辑
-│   │   ├── loops.py        #   ★ 撑住率、演练日志、降级判定
-│   │   ├── status.py       #   状态栏与连续天数
-│   │   ├── debate.py       #   辩论房编排
-│   │   ├── observations.py #   ★ 24 小时从「首次看到」算
-│   │   ├── event_cards.py  #   事件卡匹配与扫描
-│   │   ├── ai_metrics.py   #   ★ 调用用量/延迟/缓存命中/成本，落 ai_call_log
-│   │   ├── ai_queue.py     #   ★ 真队列：认领 / 执行 / 重试 / 回收 / 积压可见
-│   │   └── scheduler.py    #   夜间定时任务
-│   └── api/                # 路由层（admin.py 提供 /api/admin/ai-stats）
-├── web/                    # 前端（React + Vite）
-│   └── src/styles/tokens.css   # ★ 配色方案的全部 CSS 变量
-├── evals/                  # ★ 评测集（回答「改了 prompt 怎么知道变好了」）
-│   ├── checks.py           #   规则层：确定性、免费、进 CI
-│   ├── judge.py            #   LLM-as-judge：换源打分，可独立重跑
-│   ├── run.py              #   运行器：走和生产一样的链路
-│   └── golden/             #   golden set
-├── deploy/                 # 部署
-│   ├── DEPLOY.md           #   完整部署手册
-│   ├── nginx.conf          #   ★ SSE 必须关 proxy_buffering
-│   └── duijing.service     #   systemd + MemoryMax
-├── docs/
-│   ├── API.md              # ★ 前后端契约（改字段先改这里）
-│   ├── 新方案.txt           #   产品方案
-│   └── 配色方案.txt         #   设计规范
-├── Dockerfile              # 两阶段构建（Node 产物 + python-slim）
-├── .github/workflows/      # CI：5 个作业，含 Windows 中文编码专项与评测集
-└── tests/                  # 279 项测试
-```
-
-标 ★ 的文件集中了系统里最容易写错、且写错后会静默损害用户数据的逻辑，
-改动前请先读文件头的注释。
-
----
-
 ## 快速开始
 
-> **Windows 用户先看一眼**：`pip install -r requirements.txt` 在**中文 Windows** 上
-> 曾经会直接报 `UnicodeDecodeError: 'gbk' codec can't decode ...`——
-> 原因是 pip < 25 读 requirements 文件时不先试 UTF-8，而是用系统 locale（cp936），
-> 而文件里有中文注释。
-> **现已修复**：两个 requirements 文件的第一行都加了 PEP 263 声明（`# -*- coding: utf-8 -*-`）。
-> 如果你用的是很老的 pip 且仍然报这个错，升级即可：`python -m pip install -U pip`。
-> `tests/test_portability.py` 会守住这条声明不被误删。
-
-### 1. 后端
+**不需要任何 API Key。** `AI_PROVIDER=mock` 下全链路可完整跑通，
+结构化任务照样输出合法 JSON，业务代码走的是同一条路径。
 
 ```bash
+git clone https://gitee.com/heihei-666/dui-jing.git && cd dui-jing
 python3.12 -m venv venv
 ./venv/bin/pip install -r requirements.txt
-
 cp .env.example .env
-# 开发环境可以完全不填 Key，AI_PROVIDER=mock 就能跑通全链路
-
 ./venv/bin/uvicorn app.main:app --reload --port 3000
 ```
 
-Windows 上是 `venv\Scripts\pip.exe` / `venv\Scripts\uvicorn.exe`。
-
-打开 http://127.0.0.1:3000/docs 看自动生成的 Swagger 文档。
-
-### 2. 前端
-
-```bash
-cd web
-npm install
-npm run dev        # http://localhost:5173，/api 已代理到 3000
-```
-
-### 3. 首个用户
-
+打开 http://127.0.0.1:3000/docs 看 Swagger。
 **第一个注册的账号自动成为管理员，不需要邀请码。**
-之后所有人必须凭邀请码注册——邀请码在「资产 → 设置」里查看。
 
-### 4. 测试
-
-```bash
-./venv/bin/pip install -r requirements-dev.txt
-./venv/bin/python -m pytest
-```
-
-测试全程使用 Mock Provider，不联网、不花钱。
-
----
-
-## 配置 AI
-
-默认 `AI_PROVIDER=mock`：**不联网、不需要 Key，全链路可以完整跑通和演示**，
-AI 内容由规则生成，结构化任务同样输出合法 JSON，因此业务代码走的是同一条路径。
-
-接入真实模型只改环境变量：
+前端（可选，后端已能独立运行）：
 
 ```bash
-AI_PROVIDER=hybrid              # 按方案 5.3 分流（推荐）
-DEEPSEEK_API_KEY=sk-xxx         # 辩论房
-MIMO_API_KEY=xxx                # 复盘 / 辩题 / 扫描 / 回环对话
+cd web && npm install && npm run dev    # :5173，/api 已代理到 3000
 ```
 
-| Provider | 行为 |
+<details>
+<summary>中文 Windows 用户注意</summary>
+
+`pip install -r requirements.txt` 在**中文 Windows** 上曾经会直接报
+`UnicodeDecodeError: 'gbk' codec can't decode ...`——原因是 pip < 25
+读 requirements 文件时不先试 UTF-8，而是用系统 locale（cp936），而文件里有中文注释。
+
+**现已修复**：两个 requirements 文件的第一行都加了 PEP 263 声明。
+如果你用的是很老的 pip 且仍然报这个错，升级即可：`python -m pip install -U pip`。
+`tests/test_portability.py` 会守住这条声明不被误删。
+
+</details>
+
+## 技术栈
+
+**前端** React 18 + Vite + TypeScript + Tailwind CSS + Zustand + PWA + SSE
+**后端** Python 3.12 + FastAPI + SQLAlchemy 2.0 (async) + SQLite(WAL) + APScheduler
+**AI** DeepSeek（辩论，深度推理）+ MiMo（复盘/辩题/扫描，结构化短输出），可插拔
+**部署** 阿里云 2C2G + Nginx + systemd，Docker 镜像已通过 CI 构建验证
+
+## 文档
+
+| 文档 | 内容 |
 |---|---|
-| `mock` | 全部走 Mock |
-| `deepseek` | 全部走 DeepSeek |
-| `mimo` | 全部走 MiMo |
-| `hybrid` | 辩论房走 DeepSeek，其余走 MiMo |
-
-> ⚠️ **AI 调用失败时，不会悄悄换成 Mock。** 这是刻意的设计：
-> 超时或报错时如果返回一段**看起来很像真的**模拟观察，
-> 它会以「AI 的真实判断」被写进弱点库——而这个产品最不能脏的就是这份数据。
-> 所以失败会**显式报错（HTTP 502）**，让用户重试。
->
-> **「没配 Key」是另一回事**：那属于**明确的降级模式**，在选 Provider 的阶段就决定了，
-> 可在 `GET /api/health` 的 `ai.degraded` / `degraded_tasks` 看到。
-> 降级状态**按任务族分别判断**（此前是「只要任意一个 Key 存在就算健康」——
-> 那个判断是错的：配了 DeepSeek 却没配 MiMo 时，复盘会失败而健康检查一路报告正常）。
-
-### 成本控制
-
-Prompt 按「固定系统 Prompt → 弱点库摘要 → 优势库摘要 → 回环描述 → 可变内容」分层，
-前四块在同一场辩论内**逐字节稳定**，从而命中缓存前缀。
-弱点库摘要按 ID 排序——这是硬性要求，任何排序不稳定都会让缓存命中率归零。
-
----
-
-## 密钥安全
-
-**这个仓库是公开的。** 密钥永远不进版本库，规则如下。
-
-### 三层防护
-
-| 层 | 机制 | 挡住什么 |
-|---|---|---|
-| 1 | `.gitignore` 忽略 `.env` / `data/` / `*.db` | 常规误提交 |
-| 2 | `.githooks/pre-commit` 提交前扫描暂存区 | `git add -f`、把密钥粘到别的文件里 |
-| 3 | `tests/test_secrets_hygiene.py` | 兜底：扫当前树 + **全部 git 历史** |
-
-第 2 层需要在每个克隆里启用一次：
-
-```bash
-git config core.hooksPath .githooks
-```
-
-第 1 层的 `.gitignore` 是**受版本控制的规则文件**，它的含义是
-「告诉 git 不要跟踪这些路径」——被忽略的文件**从未离开过本机**，
-不是「先上传再隐藏」。这是 `.gitignore` 与「删除文件」的本质区别。
-
-### 可以入库 vs 不可以入库
-
-| 文件 | 能否入库 | 说明 |
-|---|---|---|
-| `.env.example` | ✅ 可以 | 模板，**所有密钥字段都是空值**。公开仓库的通行做法：告诉协作者要配哪些变量，但不泄露任何真实值 |
-| `.env` | ❌ 绝不 | 真实密钥。由部署脚本在**服务器上**生成，或本地手工创建 |
-| `data/.jwt_secret` | ❌ 绝不 | 首次启动自动生成，泄露它等于可以伪造任何人的登录态 |
-
-### 部署时密钥怎么走
-
-密钥**不经过 git**：
-
-```text
-本地 .env ──(SSH 加密通道)──> 服务器 /opt/duijing/.env（600，属主 app）
-                                      ↑
-                          git clone 只带代码，不带任何 .env
-```
-
-`deploy/server-setup.sh` 首次运行会生成一份**密钥字段为空的** `.env`，
-真实 Key 由部署者单独写入。这样即使服务器被人拿到仓库地址，
-仓库里也没有任何可用凭据。
-
-### 如果密钥真的泄露了
-
-**唯一有效的补救是去服务商轮换密钥**，不是删提交。原因：
-
-- Git 是分布式版本库，你删掉的提交可能已经被别人克隆走了
-- Gitee / GitHub 会保留悬空对象一段时间，通过 commit hash 仍可访问
-- 搜索引擎和代码扫描服务可能已经抓取
-
-轮换步骤：
-
-1. 去 DeepSeek / 小米开放平台**吊销旧 Key**，生成新的
-2. 更新服务器上的 `.env` 并 `systemctl restart duijing`
-3. （可选）用 `git filter-repo` 清理历史——但这只是减少扩散，不能收回已泄露的凭据
-
----
-
----
-
-## 开发约束
-
-以下 10 条来自产品方案第九章，是**不可协商**的。改代码前请确认没有违反：
-
-1. **不新增模块** —— 功能必须在既有模块清单内
-2. **不改 AI 路由规则** —— 辩论房走 DeepSeek，其余走 MiMo
-3. **缓存前缀必须从第一个字符开始一致** —— 弱点库摘要按 ID 排序
-4. **弱点数据默认私密** —— 任何分享都是用户主动动作
-5. **AI 观察每场最多 1 优势 + 1 弱点 + 1 替代动作** —— 不许多给
-6. **状态栏只做轻操作** —— 不能写日记、建原则、开辩论
-7. **所有经验变动必须写 loop_log** —— 不直接改弱点状态
-8. **回环降级必须用户确认** —— 绝不自动降级
-9. **AI 观察候选 24 小时** —— 从首次看到算，不是从生成算
-10. **通知默认关闭** —— 唯一例外是用户主动预约的辩论提醒
-
-这些约束都有对应的测试用例（`tests/test_core_rules.py`、`tests/test_ai_layer.py`）。
-
----
-
-## 数据库
-
-SQLite + WAL，PRAGMA 按方案 4.4：
-
-```sql
-PRAGMA journal_mode = WAL;
-PRAGMA synchronous  = NORMAL;
-PRAGMA cache_size   = -8000;
-PRAGMA busy_timeout = 5000;
-```
-
-共 **19** 张表。方案文档列了 14 张（其中 `archive` 对应这里的 `archive_record`），
-另有 5 张是实现必需但文档未列的：
-
-| 表 | 为什么必须有 |
-|---|---|
-| `debate_participant` | 多人辩论最多 4 人，且被邀请者看不到发起人数据——没有关系表无法做权限判定 |
-| `debate_review` | 复盘卡片不持久化的话，刷新页面即丢失 |
-| `push_subscription` | 方案 3.9 唯一允许的主动触达（用户主动预约的辩论提醒）需要存 Web Push 订阅 |
-| `debate_reminder` | 预约提醒本身要落库，否则重启即丢；也是幂等派发的依据 |
-| `ai_call_log` | 每次模型调用的用量/延迟/缓存命中的观测记录，`/api/admin/ai-stats` 的数据源 |
-
-> `push_subscription` / `debate_reminder` 此前没写进 README（文档写的是 16 张），
-> 2026-10-03 核对时改正；`ai_call_log` 是同日新增的可观测性表。
-
-另有 2 处列级补充：`ai_observation.first_seen_at`（24 小时从首次看到算，规则要求此列）、
-`debate_message.abandoned`（「这轮我放弃」需与普通发言区分，不能靠内容匹配）。
-
----
+| [CONTRIBUTING.md](CONTRIBUTING.md) | 开发环境、测试、**10 条不可协商的开发约束**、哪些文件不能凭直觉改 |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 核心闭环、目录结构、数据库（19 张表）、规模取舍 |
+| [docs/CONFIG.md](docs/CONFIG.md) | AI Provider 配置、**失败不降级的设计理由**、成本控制 |
+| [docs/SECURITY.md](docs/SECURITY.md) | 密钥三层防护、泄露应急 |
+| [docs/API.md](docs/API.md) | 前后端契约（改字段先改这里） |
+| [deploy/DEPLOY.md](deploy/DEPLOY.md) | 完整部署手册 |
 
 ## 部署
 
-### 方式一：直接部到服务器
-
-见 [`deploy/DEPLOY.md`](deploy/DEPLOY.md)。
-
-**上线前必做**：开 2G Swap（否则构建和 AI 峰值会被 OOM Killer 干掉）、
-设 `COOKIE_SECURE=true`、`CORS_ORIGINS` 填真实域名、`JWT_SECRET` 用随机值。
-
-### 方式二：Docker（推荐做演示站）
-
 ```bash
+# Docker
 docker build -t duijing .
 docker run -p 3000:7860 -e PORT=7860 -e AI_PROVIDER=mock duijing
 ```
 
-镜像内默认 `AI_PROVIDER=mock`：**不联网、不需要 Key，全链路可完整演示**，
-AI 内容由规则生成但走的是同一条业务路径。
-要接真实模型就加 `-e AI_PROVIDER=hybrid -e DEEPSEEK_API_KEY=... -e MIMO_API_KEY=...`。
+直接部署到服务器见 [deploy/DEPLOY.md](deploy/DEPLOY.md)。
+**上线前必做**：开 2G Swap、设 `COOKIE_SECURE=true`、`CORS_ORIGINS` 填真实域名、
+`JWT_SECRET` 用随机值。
 
-> ⚠️ **不要把真实 Key 放到公开的演示站上**，那会把你的额度烧掉。
+> `duijing.xyz` 未备案，**国内直连会在 TLS 的 SNI 阶段被重置**
+> （实测：钉住 IP 只改 SNI 就 `ECONNRESET`；换端口也绕不过，因为拦截看的是 SNI）。
+> 要做给国内看的演示站就得放境外平台，并且**务必**
+> `AI_PROVIDER=mock`（别把真实额度烧在公开站点上）+ 挂持久卷 + 放录屏截图。
 
-### 方式三：任意容器平台
+## 评测集
 
-镜像已通过 CI 构建验证，可以直接部署到任何支持 Docker 的平台。
+`tests/` 测的是**管道**，`evals/` 测的是**模型输出质量**——
+回答「改了 prompt，怎么知道是变好了还是变坏了」。两层结构：
 
-> 如果要做给国内面试官看的演示站：`duijing.xyz` 未备案，**国内直连会在 TLS 的 SNI
-> 阶段被重置**（实测：钉住 IP 只改 SNI 就 `ECONNRESET`；换端口也绕不过，
-> 因为拦截看的是 SNI）。一位没有梯子的面试官打不开自建站，
-> 所以演示站建议放在境外平台。
->
-> 放公开演示站时**务必**：`AI_PROVIDER=mock`（别把真实 Key 烧掉）、
-> 数据目录挂持久卷（否则重启即丢数据）、并且**在 README 里放录屏 + 截图**——
-> 线上 demo 随时可能挂，截图和录屏才是不会失效的证明。
+| 层 | 跑什么 | 花钱 | 在哪跑 |
+|---|---|---|---|
+| **规则校验** | 观察上限、废话黑名单、长度、复盘块非空、是否落在对应层 | **免费** | **CI 每次提交** |
+| **LLM-as-judge** | 具体性 / 有无依据 / 可执行性 / 是不是废话 | 几毛钱 | 手动 |
 
----
+judge 用 DeepSeek 当裁判，被测的观察提取走 MiMo——**换源是为了避免同一个模型给自己打分**。
 
-## 评测集：改了 prompt，怎么知道是变好了还是变坏了
-
-这是这个项目里最容易被忽略、但最能说明工程成熟度的一块。
-`tests/` 测的是**管道**（路由对不对、JSON 能不能抠出来），
-**没有一条在评估模型输出的质量**。`evals/` 补的就是这个。
-
-两层结构，因为两件事的成本和确定性完全不同：
-
-| 层 | 跑什么 | 花钱 | 在哪跑 | 证明什么 |
-|---|---|---|---|---|
-| **规则校验** | 观察上限、废话黑名单、长度、复盘块非空、是否落在对应层 | **免费**（Mock） | **CI 每次提交** | 管道没坏 |
-| **LLM-as-judge** | 具体性 / 有无依据 / 可执行性 / 是不是废话 / 是否错标 | 几毛钱 | 手动 | 观察准不准 |
-
-judge 默认用 **DeepSeek** 当裁判，而被测的观察提取走 MiMo（方案 5.3 的路由）——
-**换源是为了避免同一个模型给自己打分**，那样系统性偏袒无法被发现。
-
-### 实测：prompt 迭代三版
-
-同一套 30 条 golden set、同一个裁判：
+一套 30 条 golden set，prompt 迭代三版的实际结果：
 
 | 指标 | v1 | v2 | **v2.1** | 总变化 |
 |---|---|---|---|---|
 | 具体性（5 分制） | 3.26 | 3.86 | **4.22** | **+29%** |
-| 有依据（5 分制） | 3.51 | 3.88 | **4.42** | **+26%** |
 | 可执行性（5 分制） | 2.40 | 2.92 | **3.27** | **+36%** |
 | 判为废话 | 13 条 | 6 条 | **2 条** | **−85%** |
-| 判为错标 | 16 条 | 7 条 | **5 条** | **−69%** |
 | **跨用例重复的观察** | 3 类 | 2 类 | **0 类** | **套模板消失** |
-| 规则层通过率 | 100% | 96.7% | **100%** | |
 | 成本 / 轮 | 0.069 元 | 0.085 元 | 0.090 元 | +29.5% |
 
-**评分涨 26~36%，成本涨 29.5%**（prompt 402→1707 字符）——这笔账划不划算取决于产品，
-但**至少它是可算的**。
-
-### 三版之间发生了什么（这才是重点）
-
-- **v1 的问题**：复盘 prompt **通篇没提「观察四层」**（辩论 prompt 里有，这份没有）。
-  结果模型对几乎每场辩论都只回「回避追问」+「立场坚定」两个万能标签——
-  **它根本没在读内容。**
-- **v2 修了什么**：补四层定义；写清「什么不算观察」并给出一条自检
-  （换个持同样立场但表现完全不同的人，这个标签还成立吗）；
-  要求 `reason` 必须**原样引用用户说过的至少 4 个字**。
-- **v2 的代价，以及 v2.1 怎么修的**：v2 让三个质量分全涨了，
-  **但规则层通过率从 100% 掉到 96.7%**——复盘的「如果再来一次」那一栏变成**空白**。
-  v2 的严格性外溢到了叙事块。v2.1 把「没依据就给 null」限定在两条观察上，
-  三个叙事块反过来必须写。**回归修好，质量分继续涨。**
-
-> **这一节最该被看到的是 v2 那次代价**：只看 judge 的三个分数，
-> 会得出「v2 全面变好」——**那是错的**。那个空白栏只有规则层抓得到。
-> **确定性检查和质量评分互相看不见对方的盲区**，这就是两层设计存在的理由。
-
-### 用法
+最有价值的一条经验写在 `evals/README.md` 里：**v2 让三个质量分全涨了，
+却让复盘卡片的「如果再来一次」变成空白栏——那个回归只有规则层抓得到。**
+只看 judge 的分数会得出「v2 全面变好」，那是错的。
 
 ```bash
-python -m evals.run --mode rules                                    # 免费，CI 跑这个
-REVIEW_PROMPT_VERSION=v1|v2|v2.1 python -m evals.run --mode judge    # 需要 Key
-python -m evals.judge --report evals/reports/rules-<时间戳>.json      # judge 单独重跑
+python -m evals.run --mode rules      # 免费，秒级
+python -m evals.run --mode judge      # 需要 Key
 ```
-
-详见 [`evals/README.md`](evals/README.md)。**当前 golden set 是合成数据**，
-不是生产脱敏数据——这一点如实写在文档里，不含糊。
-
----
 
 ## 工程化
 
 | 项 | 状态 |
 |---|---|
-| CI | [`.github/workflows/ci.yml`](.github/workflows/ci.yml)：**5 个作业** —— Ubuntu 后端测试 + **Windows 中文编码专项** + 前端类型检查/构建 + 镜像构建 + **评测集规则校验** |
-| 为什么有 Windows 作业 | 有两个真实缺陷只在非 UTF-8 的 Windows 上出现（见 `tests/test_portability.py`），只在 Linux 跑测试永远发现不了 |
-| 测试 | **279 项**，全程 Mock Provider，不联网不花钱 |
-| 评测 | 见上一节；规则层免费进 CI，judge 层手动跑 |
-| 许可 | [MIT](LICENSE) |
+| CI | **5 个作业**：Ubuntu 后端测试 + **Windows 中文编码专项** + 前端类型检查/构建 + 镜像构建 + **评测集规则校验** |
+| 测试 | **279 项**，全程 Mock，不联网不花钱 |
 | 密钥防线 | `.gitignore` + `.githooks/pre-commit` + `tests/test_secrets_hygiene.py`（三层） |
-| 观测 | `GET /api/admin/ai-stats`（管理员）：调用量、成本、缓存命中率、TTFT、解析失败率 |
+| 可观测性 | 每次模型调用的 token / 缓存命中 / 成本 / 延迟落 `ai_call_log`；`GET /api/admin/ai-stats` |
+| 任务队列 | 认领 / 执行 / 重试 / 回收，积压可见（不是「假队列」） |
 
-启用提交钩子（每个克隆一次）：
+> 为什么有 Windows 作业：有两个真实缺陷只在非 UTF-8 的 Windows 上出现
+> （见 `tests/test_portability.py`），只在 Linux 跑测试永远发现不了。
 
-```bash
-git config core.hooksPath .githooks
-```
+## 许可
+
+[MIT](LICENSE)
