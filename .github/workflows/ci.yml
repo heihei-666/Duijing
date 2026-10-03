@@ -51,6 +51,29 @@ jobs:
       - name: 跑测试（曾因 subprocess 未指定 encoding 而失败）
         run: python -m pytest
 
+  evals:
+    name: 评测集规则校验
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: 安装运行依赖
+        # 评测只跑规则层，不需要 pytest，也不需要任何 API Key
+        run: pip install -r requirements.txt
+
+      - name: 跑评测（规则层，AI_PROVIDER=mock）
+        # 这一层挡的是**硬错误**：schema 不合、观察超上限、输出「你很棒」这类废话、
+        # 复盘三块为空。全是确定性的，所以免费、秒级、不会 flaky。
+        #
+        # 它**不**评价「这条观察准不准」—— 那需要判断力，是 judge 层的活，
+        # 要真实模型和 Key，只在本地/服务器手动跑（见 evals/README.md）。
+        run: python -m evals.run --mode rules
+
   frontend:
     name: 前端类型检查与构建
     runs-on: ubuntu-latest

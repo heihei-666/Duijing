@@ -29,6 +29,9 @@ e2e/shots/
 e2e/*-result.json
 e2e/result.json
 
+# ── 评测报告（golden set 与脚本要入库，每次跑出来的报告不入库）──
+evals/reports/
+
 # ── 编辑器 / 系统 ─────────────────────────────────────
 .DS_Store
 .idea/
