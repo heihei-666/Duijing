@@ -33,7 +33,10 @@ APP_DIR="${APP_DIR:-/opt/duijing}"
 APP_USER="${APP_USER:-app}"
 WEB_ROOT="${WEB_ROOT:-/var/www/duijing/dist}"
 PORT="${PORT:-3000}"
-REPO_URL="${REPO_URL:-https://gitee.com/heihei-666/qingyu-diary.git}"
+# 注意：对镜的仓库是 dui-jing，**不是** qingyu-diary。
+# 2026-10 两个项目曾共用一条 git 历史，后来拆成两个独立仓库；
+# 这个默认值当时没跟着改，照着文档部署会拉到青屿日记的代码。
+REPO_URL="${REPO_URL:-https://gitee.com/heihei-666/dui-jing.git}"
 SWAP_SIZE="${SWAP_SIZE:-2G}"
 
 log()  { printf '\033[1;34m==>\033[0m %s\n' "$*"; }

@@ -79,7 +79,8 @@ apt install -y python3.12 python3.12-venv python3-pip nginx git curl sqlite3
 ```bash
 useradd -r -m -d /opt/duijing -s /bin/bash app
 
-git clone https://gitee.com/heihei-666/qingyu-diary.git /opt/duijing
+# 注意仓库名是 dui-jing，不是 qingyu-diary（两者曾共用历史，2026-10 已拆分）
+git clone https://gitee.com/heihei-666/dui-jing.git /opt/duijing
 chown -R app:app /opt/duijing
 ```
 

@@ -4,6 +4,13 @@
 >
 > 项目本身的交接看 `docs/交接说明.md`；这份**只讲协作方式、操作习惯、以及踩过的坑**。
 
+> **⚠️ 2026-10-03 阅读提示：本文是历史记录，路径已失效。**
+> 里面写的 `/sdcard/DSH/qingyu-diary`、`/root/djsw`、`/root/djrun` 等，是**上一位 AI
+> 所在的手机容器**里的路径，换环境就没了；而且仓库当时还叫 `qingyu-diary`，
+> 现在对镜是独立仓库 **`dui-jing`**、青屿日记另有一个仓库。
+> **§3「踩过的坑」和 §6「不要让 AI 单独做的事」仍然有效**，值得一读；
+> 但所有路径、工具版本、以及「160 项测试」这类数字都要按当前仓库重新核对。
+
 ---
 
 ## 0. 先用一句话说清它的工作方式
@@ -66,9 +73,8 @@ ssh <服务器> "sudo rsync -a --delete /tmp/dj-dist/ /var/www/duijing/dist/ \
 ### 跑测试
 
 ```bash
-# 后端（160 项）
-rsync -a --delete /sdcard/DSH/qingyu-diary/{tests,pytest.ini} /root/djrun/ && cd /root/djrun
-/root/djvenv/bin/python -m pytest -q
+# 后端（当前 188 项；上面 §0 里说的路径已失效，改成在你自己的仓库根目录跑）
+python -m pytest -q
 
 # 端到端（会连生产站点，跑完必须清理账号，见 e2e/README.md）
 DJ_INVITE=<邀请码> node e2e/accept.mjs

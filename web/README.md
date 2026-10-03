@@ -31,11 +31,15 @@ src/
     types.ts            # 契约类型（枚举 + 核心对象），字段名照抄 API.md
     client.ts           # fetch 封装 + 按契约分模块的 api（authApi/statusApi/...）
   components/
-    common/             # Button / Field / Sheet / EmptyState / BootSplash / PageScaffold
+    common/             # Button / Field / Sheet / EmptyState / BootSplash
     layout/             # AppShell（底部 4 Tab）/ TabBar / AuthLayout
     routing/            # RequireAuth / GuestOnly
     icons/              # 手写 SVG 图标
   features/
+    debate/             # 辩论房：SSE 流式、四来源出题、邀请、复盘卡片、预约提醒
+    weakness/           # 弱点墙（宽屏黑板拖拽 + 窄屏列表）、回环、演练日志
+    assets/             # 优势库 / 原则库 / 事件卡历史 / 设置
+    push/               # Web Push：权限状态机、VAPID 公钥、订阅管理
     status-bar/         # 首页四块 + 撑住率进度条 + 精力滑块
   lib/                  # rateColor / date / cn
   pages/                # 路由页面
@@ -79,7 +83,16 @@ src/
 
 ## 本阶段范围
 
-已完成：工程骨架、设计令牌、API 客户端、认证状态、路由与底部 Tab、登录 / 注册 / 邀请链接落地、
-首页状态栏四块（含空状态、精力滑块、AI 观察的加入/忽略）。
+**已完成（全部页面都已落地，不再是占位页）：**
 
-占位页（后续同事实现）：辩论、弱点、弱点详情、资产。
+| 页面 | 路由 | 说明 |
+|---|---|---|
+| 登录 / 注册 / 邀请落地 | `/login` `/register` `/join/:code` | 首个用户免邀请码，之后必须凭码 |
+| 首页状态栏 | `/` | 日期 + 精力 + 连续天数 / 今天练什么 / AI 昨天观察到 / 两个快捷入口 |
+| 辩论 | `/debates` | 新辩论（回环 / 事件卡 / 场景 / 自己出题四来源）、进行中、历史、P3 建议题 |
+| 辩论房 | `/debates/:id` | SSE 流式、轮次提示、暂停 / 放弃本轮 / 结束复盘、邀请、预约提醒 |
+| 弱点墙 | `/weaknesses` | 四区；≥768px 是 dnd-kit 黑板（三列 + 垃圾桶），窄屏自动降级为分区列表 |
+| 弱点详情 | `/weaknesses/:id` | 撑住率趋势、回环列表与演练日志、垃圾桶倒计时 |
+| 资产 | `/assets` | 优势库 / 原则库 / 事件卡历史（分页）/ 设置（含通知与账号数据） |
+
+**待办**：深色模式（方案明确后置）、前端自动化测试与 ESLint/Prettier（尚未配置）。

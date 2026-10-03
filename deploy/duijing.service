@@ -8,7 +8,7 @@
 
 [Unit]
 Description=对镜 · 个人成长工作台
-Documentation=https://gitee.com/heihei-666/qingyu-diary
+Documentation=https://gitee.com/heihei-666/dui-jing
 After=network-online.target
 Wants=network-online.target
 

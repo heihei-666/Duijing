@@ -263,13 +263,17 @@ PRAGMA cache_size   = -8000;
 PRAGMA busy_timeout = 5000;
 ```
 
-共 16 张表。方案文档列了 14 张（其中 `archive` 对应这里的 `archive_record`），
-另有 2 张是实现必需但文档未列的：
+共 **18** 张表。方案文档列了 14 张（其中 `archive` 对应这里的 `archive_record`），
+另有 4 张是实现必需但文档未列的：
 
 | 表 | 为什么必须有 |
 |---|---|
 | `debate_participant` | 多人辩论最多 4 人，且被邀请者看不到发起人数据——没有关系表无法做权限判定 |
 | `debate_review` | 复盘卡片不持久化的话，刷新页面即丢失 |
+| `push_subscription` | 方案 3.9 唯一允许的主动触达（用户主动预约的辩论提醒）需要存 Web Push 订阅 |
+| `debate_reminder` | 预约提醒本身要落库，否则重启即丢；也是幂等派发的依据 |
+
+> 这两张表此前没写进 README（文档写的是 16 张），2026-10-03 核对时改正。
 
 另有 2 处列级补充：`ai_observation.first_seen_at`（24 小时从首次看到算，规则要求此列）、
 `debate_message.abandoned`（「这轮我放弃」需与普通发言区分，不能靠内容匹配）。
