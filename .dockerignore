@@ -1,0 +1,46 @@
+# 构建镜像时不需要进上下文的东西。
+#
+# 注意**不要**排除 web/ 本身 —— 阶段 1 要拿它的源码构建。
+# 但产物与依赖必须排除：它们在镜像里会由 npm ci / vite build 重新生成。
+
+# ── 版本控制与文档 ────────────────────────────────────────
+.git
+.gitattributes
+.githooks
+.github
+
+# ── Python ───────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# ── 数据与密钥（绝不进镜像）─────────────────────────────
+data/
+*.db
+*.db-wal
+*.db-shm
+.env
+.env.local
+.env.*.local
+
+# ── 前端产物与依赖 ───────────────────────────────────────
+node_modules/
+web/node_modules/
+web/dist/
+.vite/
+
+# ── 端到端验收的产物 ─────────────────────────────────────
+e2e/node_modules/
+e2e/shots/
+e2e/*-result.json
+
+# ── 编辑器 / 系统 ────────────────────────────────────────
+.DS_Store
+.idea/
+.vscode/
+*.swp

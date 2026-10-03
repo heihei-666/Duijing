@@ -1,0 +1,86 @@
+name: CI
+
+# 这个仓库此前**完全没有 CI** —— 这是几个真实缺陷能长期潜伏的直接原因：
+#   · 中文 Windows 上 `pip install -r requirements.txt` 报 UnicodeDecodeError
+#   · 中文 Windows 上 test_no_env_blob_in_history 因 cp936 解码失败而挂
+#   · deploy/server-setup.sh 的 REPO_URL 在仓库拆分后还指向另一个项目
+# 前两个只在**非 UTF-8 的 Windows** 上出现，而之前只在 Ubuntu 容器里跑过测试。
+#
+# 所以这里的 Windows 作业不是「多此一举」：它是唯一能挡住那类问题的关卡。
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  backend:
+    name: 后端测试（Ubuntu）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: 安装依赖
+        run: pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: 跑测试
+        # 不加 -q：pytest.ini 的 addopts 已经带了 -q，
+        # 命令行再来一个会变成 -qq 把汇总行也吞掉。
+        run: python -m pytest
+
+  backend-windows:
+    name: 后端测试（Windows / 中文编码）
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: 安装依赖（这一步曾因 cp936 解码 requirements.txt 而失败）
+        run: pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: 跑测试（曾因 subprocess 未指定 encoding 而失败）
+        run: python -m pytest
+
+  frontend:
+    name: 前端类型检查与构建
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: 安装依赖（用锁文件，保证可复现）
+        run: npm ci
+
+      - name: 类型检查
+        run: npm run typecheck
+
+      - name: 构建
+        run: npm run build
+
+  docker:
+    name: 镜像可构建
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # 只验证能构建出来，不推送。演示部署走 HuggingFace Spaces。
+      - name: 构建镜像
+        run: docker build -t duijing:ci .

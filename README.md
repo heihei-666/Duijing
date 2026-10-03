@@ -284,7 +284,55 @@ PRAGMA busy_timeout = 5000;
 
 ## 部署
 
+### 方式一：直接部到服务器
+
 见 [`deploy/DEPLOY.md`](deploy/DEPLOY.md)。
 
 **上线前必做**：开 2G Swap（否则构建和 AI 峰值会被 OOM Killer 干掉）、
 设 `COOKIE_SECURE=true`、`CORS_ORIGINS` 填真实域名、`JWT_SECRET` 用随机值。
+
+### 方式二：Docker（推荐做演示站）
+
+```bash
+docker build -t duijing .
+docker run -p 3000:7860 -e PORT=7860 -e AI_PROVIDER=mock duijing
+```
+
+镜像内默认 `AI_PROVIDER=mock`：**不联网、不需要 Key，全链路可完整演示**，
+AI 内容由规则生成但走的是同一条业务路径。
+要接真实模型就加 `-e AI_PROVIDER=hybrid -e DEEPSEEK_API_KEY=... -e MIMO_API_KEY=...`。
+
+> ⚠️ **不要把真实 Key 放到公开的演示站上**，那会把你的额度烧掉。
+
+### 方式三：HuggingFace Spaces（让国内面试官点得开）
+
+本仓库 README 顶部的 frontmatter（`sdk: docker`）就是给 Spaces 用的，
+配合根目录的 `Dockerfile` 可以直接部署。
+
+**为什么需要它**：`duijing.xyz` 未备案，国内直连会在 TLS 的 SNI 阶段被重置
+（实测：钉住 IP 只改 SNI 就 `ECONNRESET`；换端口也绕不过）。
+**一位没有梯子的中国面试官打不开自建站**，而 Spaces 是可达的。
+
+在 Spaces 的 Settings 里加一个持久化：`DB_PATH=/data/duijing.db`
+（`/data` 是 Spaces 提供的持久卷，不设的话重启即丢数据）。
+
+> 另外**务必**在 README 里放一段录屏 + 几张截图。
+> 线上 demo 随时可能挂，截图和录屏才是不会失效的证明。
+
+---
+
+## 工程化
+
+| 项 | 状态 |
+|---|---|
+| CI | [`.github/workflows/ci.yml`](.github/workflows/ci.yml)：Ubuntu + **Windows** + 前端类型检查/构建 + 镜像构建 |
+| 为什么有 Windows 作业 | 有两个真实缺陷只在非 UTF-8 的 Windows 上出现（见 `tests/test_portability.py`），只在 Linux 跑测试永远发现不了 |
+| 许可 | [MIT](LICENSE) |
+| 密钥防线 | `.gitignore` + `.githooks/pre-commit` + `tests/test_secrets_hygiene.py`（三层） |
+| 观测 | `GET /api/admin/ai-stats`（管理员）：调用量、成本、缓存命中率、TTFT、解析失败率 |
+
+启用提交钩子（每个克隆一次）：
+
+```bash
+git config core.hooksPath .githooks
+```
