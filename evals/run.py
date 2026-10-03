@@ -45,7 +45,15 @@ def _bootstrap_env() -> None:
     评测要能独立地在服务器上跑（那里没有 tests/ 的运行环境）。
     """
     tmp = tempfile.mkdtemp(prefix="duijing-eval-")
-    os.environ.setdefault("DB_PATH", os.path.join(tmp, "eval.db"))
+
+    # ⚠️ DB_PATH 用**赋值**而不是 setdefault —— 这里差一点就出事：
+    # 评测很可能会在服务器上跑（那里 .env 里有 Key），而 .env 里同时写着
+    # DB_PATH=/opt/duijing/data/duijing.db。只要继承了它，评测就会把几十个
+    # 测试账号和辩论房写进**生产库**。golden set 是合成的，本来也不需要生产数据，
+    # 所以这里无条件换成独立临时库。
+    os.environ["DB_PATH"] = os.path.join(tmp, "eval.db")
+
+    # 以下这些用 setdefault，允许调用方覆盖
     os.environ.setdefault("ENABLE_SCHEDULER", "false")
     # 默认 mock：CI 里不配置任何 Key 也能跑，且结果确定
     os.environ.setdefault("AI_PROVIDER", "mock")
@@ -58,6 +66,21 @@ def _bootstrap_env() -> None:
     os.environ.setdefault("DEBATE_RATE_PER_MIN", "100000")
     os.environ.setdefault("AI_RATE_PER_MIN", "100000")
     os.environ.setdefault("LOGIN_LOCK_THRESHOLD", "100000")
+
+
+def _assert_isolated_db() -> None:
+    """跑之前再确认一次用的是临时库 —— 这条断言是最后一道防线。"""
+    from app.config import settings
+
+    db_path = str(settings.DB_PATH)
+    normalized = db_path.replace("\\", "/")
+    ok = any(token in normalized for token in ("duijing-eval-", "Temp/", "temp/", "/tmp/"))
+    if not ok:
+        raise SystemExit(
+            f"❌ 拒绝运行：DB_PATH 指向 {db_path!r}，看起来不是评测用的临时库。\n"
+            "   评测会写几十个测试账号，绝不能在别处跑。"
+        )
+    print(f"数据库（隔离）：{db_path}")
 
 
 _bootstrap_env()
@@ -185,6 +208,7 @@ def run(mode: str, limit: int | None) -> int:
         return 2
 
     print(f"评测模式：{mode}   用例数：{len(cases)}   AI_PROVIDER={os.environ['AI_PROVIDER']}")
+    _assert_isolated_db()
     print("-" * 72)
 
     MockProvider.stream_delay = 0
@@ -225,6 +249,23 @@ def run(mode: str, limit: int | None) -> int:
         for kind, n in summary["failure_kinds"].items():
             print(f"   {n:>3} 次  {kind}")
 
+    # 评测自己花了多少钱 —— 正好用上 ai_call_log 那套埋点。
+    # 不报这个数，跑一次评测到底烧了多少就只能去服务商后台看，而「去后台看」
+    # 正是这次改造要消灭的东西。
+    from app.services import ai_metrics
+
+    usage = ai_metrics.snapshot()
+    if usage["calls"]:
+        hit = usage["cache_hit_rate"]
+        print(
+            f"\n本次评测的模型用量：调用 {usage['calls']} 次，"
+            f"token {usage['prompt_tokens']}+{usage['completion_tokens']}，"
+            f"缓存命中 {hit if hit is None else f'{hit:.1%}'}，"
+            f"估算成本 {usage['cost_yuan']:.4f} 元"
+        )
+        if usage["errors"]:
+            print(f"  其中失败 {usage['errors']} 次")
+
     REPORTS.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     out = REPORTS / f"{mode}-{stamp}.json"
@@ -233,6 +274,7 @@ def run(mode: str, limit: int | None) -> int:
         "ai_provider": os.environ["AI_PROVIDER"],
         "ran_at": stamp,
         "summary": summary,
+        "usage": usage,
         "cases": details,
     }
 
