@@ -25,12 +25,6 @@
  */
 
 import type {
-  AdvantageListResponse,
-  AdvantageMutationResponse,
-  AdvantageRemoveResponse,
-  AdvantageStatus,
-  ArchivePurgeResponse,
-  ArchiveResponse,
   AuthMeResponse,
   AuthResponse,
   DailyState,
@@ -52,32 +46,13 @@ import type {
   InviteInfo,
   InviteRotateResponse,
   LoginPayload,
-  LoopCreatePayload,
-  LoopCreateResponse,
-  LoopLogCreateResponse,
-  LoopLogListResponse,
-  LoopLogPayload,
-  LoopMutationResponse,
-  LoopUpdatePayload,
   ObservationAcceptResponse,
   ObservationListResponse,
   ObservationStatus,
   OkResponse,
-  PrincipleCreatePayload,
-  PrincipleListResponse,
-  PrincipleMutationResponse,
-  PrincipleStatus,
-  PrincipleUpdatePayload,
   RegisterPayload,
   RegisterResponse,
   StatusBar,
-  WeaknessArchiveResponse,
-  WeaknessCreatePayload,
-  WeaknessDetail,
-  WeaknessGroupsResponse,
-  WeaknessMutationResponse,
-  WeaknessStatus,
-  WeaknessUpdatePayload,
 } from './types';
 
 const API_PREFIX = '/api';
@@ -293,45 +268,6 @@ export const debateApi = {
   streamUrl: (id: number, afterSeq?: number) =>
     `${API_PREFIX}/debates/${id}/stream${buildQuery({ after_seq: afterSeq })}`,
 };
-
-/* --------------------------------------------------------- 弱点 / 回环 */
-
-export const weaknessApi = {
-  /** status 多值用逗号分隔，不传则返回全部分组 */
-  list: (status?: WeaknessStatus[]) =>
-    request<WeaknessGroupsResponse>('/weaknesses', { query: { status } }),
-
-  create: (payload: WeaknessCreatePayload) =>
-    request<WeaknessMutationResponse>('/weaknesses', { method: 'POST', body: payload }),
-
-  get: (id: number) => request<WeaknessDetail>(`/weaknesses/${id}`),
-
-  update: (id: number, payload: WeaknessUpdatePayload) =>
-    request<WeaknessMutationResponse>(`/weaknesses/${id}`, { method: 'PATCH', body: payload }),
-
-  /** 移入垃圾桶（60 天倒计时）→ `{ weakness, note }` */
-  archive: (id: number) =>
-    request<WeaknessArchiveResponse>(`/weaknesses/${id}/archive`, { method: 'POST' }),
-
-  /** 恢复为 observing，触发计数保留 */
-  restore: (id: number) =>
-    request<WeaknessMutationResponse>(`/weaknesses/${id}/restore`, { method: 'POST' }),
-
-  createLoop: (weaknessId: number, payload: LoopCreatePayload) =>
-    request<LoopCreateResponse>(`/weaknesses/${weaknessId}/loops`, {
-      method: 'POST',
-      body: payload,
-    }),
-
-  updateLoop: (loopId: number, payload: LoopUpdatePayload) =>
-    request<LoopMutationResponse>(`/loops/${loopId}`, { method: 'PATCH', body: payload }),
-
-  addLog: (loopId: number, payload: LoopLogPayload) =>
-    request<LoopLogCreateResponse>(`/loops/${loopId}/logs`, { method: 'POST', body: payload }),
-
-  listLogs: (loopId: number) => request<LoopLogListResponse>(`/loops/${loopId}/logs`),
-};
-
 /* ---------------------------------------------------------------- 事件卡 */
 
 export const eventCardApi = {
@@ -345,49 +281,6 @@ export const eventCardApi = {
   analyze: () =>
     request<EventCardAnalyzeResponse>('/event-cards/analyze', { method: 'POST' }),
 };
-
-/* ---------------------------------------------------------------- 优势库 */
-
-export const advantageApi = {
-  list: (status?: AdvantageStatus) =>
-    request<AdvantageListResponse>('/advantages', { query: { status } }),
-
-  confirm: (id: number) =>
-    request<AdvantageMutationResponse>(`/advantages/${id}/confirm`, { method: 'POST' }),
-
-  /** 移除后 AI 不再重复入库同一标签 → `{ ok, note }`（不返回 advantage） */
-  remove: (id: number) =>
-    request<AdvantageRemoveResponse>(`/advantages/${id}/remove`, { method: 'POST' }),
-
-  restore: (id: number) =>
-    request<AdvantageMutationResponse>(`/advantages/${id}/restore`, { method: 'POST' }),
-};
-
-/* ---------------------------------------------------------------- 原则库 */
-
-export const principleApi = {
-  list: (status?: PrincipleStatus) =>
-    request<PrincipleListResponse>('/principles', { query: { status } }),
-
-  create: (payload: PrincipleCreatePayload) =>
-    request<PrincipleMutationResponse>('/principles', { method: 'POST', body: payload }),
-
-  confirm: (id: number) =>
-    request<PrincipleMutationResponse>(`/principles/${id}/confirm`, { method: 'POST' }),
-
-  /** 忽略会留痕，AI 不再重复推同一条 → `{ ok }`（不返回 principle） */
-  ignore: (id: number) => request<OkResponse>(`/principles/${id}/ignore`, { method: 'POST' }),
-
-  /** 归档 → `{ ok }`（不返回 principle） */
-  archive: (id: number) => request<OkResponse>(`/principles/${id}/archive`, { method: 'POST' }),
-
-  restore: (id: number) =>
-    request<PrincipleMutationResponse>(`/principles/${id}/restore`, { method: 'POST' }),
-
-  update: (id: number, payload: PrincipleUpdatePayload) =>
-    request<PrincipleMutationResponse>(`/principles/${id}`, { method: 'PATCH', body: payload }),
-};
-
 /* --------------------------------------------------------------- AI 观察 */
 
 export const observationApi = {
@@ -405,14 +298,4 @@ export const observationApi = {
   /** 忽略 → `{ ok }` */
   ignore: (id: number) => request<OkResponse>(`/observations/${id}/ignore`, { method: 'POST' }),
 };
-
-/* ------------------------------------------------------------ 归档 / 垃圾桶 */
-
-export const archiveApi = {
-  get: () => request<ArchiveResponse>('/archive'),
-
-  /** 手动清理过期弱点（管理员） */
-  purge: () => request<ArchivePurgeResponse>('/archive/purge', { method: 'POST' }),
-};
-
 export { request as apiRequest };

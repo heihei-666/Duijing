@@ -86,13 +86,6 @@ def clamp(value: int, low: int, high: int) -> int:
     return max(low, min(high, value))
 
 
-def truncate(text: str, limit: int) -> str:
-    text = (text or "").strip()
-    if len(text) <= limit:
-        return text
-    return text[: limit - 1] + "…"
-
-
 def hold_rate(hold: int, total: int) -> int | None:
     """撑住率百分比。**无触发数据时返回 None，不是 0。**
 
@@ -119,11 +112,6 @@ def rate_bucket(rate: int | None) -> str | None:
     if rate < 80:
         return "good"  # #5B8C6B 在改善
     return "great"  # #4A8C5C 达标，可降级
-
-
-def window_start_utc(days: int = 30) -> datetime:
-    """近 N 天窗口的起点（本地日 00:00 转 UTC）。"""
-    return local_day_start_utc(local_today() - timedelta(days=days - 1))
 
 
 def parse_date(raw: str | None) -> date | None:

@@ -101,23 +101,6 @@ async def require_admin(user: User = Depends(get_current_user)) -> User:
     return user
 
 
-async def get_optional_user(
-    request: Request,
-    session: AsyncSession = Depends(get_session),
-) -> User | None:
-    token = extract_token(request)
-    if not token:
-        return None
-    payload = decode_access_token(token)
-    if not payload:
-        return None
-    try:
-        user_id = int(payload.get("sub", ""))
-    except (TypeError, ValueError):
-        return None
-    return await session.scalar(select(User).where(User.id == user_id))
-
-
 async def ensure_profile(session: AsyncSession, user: User) -> UserProfile:
     """取用户偏好，没有就建一条默认的。"""
     profile = await session.scalar(select(UserProfile).where(UserProfile.user_id == user.id))

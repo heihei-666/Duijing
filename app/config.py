@@ -105,7 +105,10 @@ class Settings:
     # 思考模式下的辩论回复实测 3-5 秒，但网络抖动或长复盘可能超过 1 分钟。
     # 实测在弱网容器里出现过一次 >120s 的读取超时，这里放宽到 180。
     AI_TIMEOUT_SECONDS: int = _int("AI_TIMEOUT_SECONDS", 180)
-    AI_MAX_RETRIES: int = _int("AI_MAX_RETRIES", 2)
+    # 注意：曾经有一个 AI_MAX_RETRIES 配置项，但**从未被任何代码引用**。
+    # 「失败重试」现在由 app/ai/structured.py 的 complete_json 负责
+    # （只重试结构化输出，且只重试一次），不需要再有一个全局开关。
+    # 删掉它是为了避免「改了这个值却没有任何效果」这种最浪费时间的排查。
 
     # ── 限流 ──────────────────────────────────────────────
     DEBATE_RATE_PER_MIN: int = _int("DEBATE_RATE_PER_MIN", 10)

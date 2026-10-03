@@ -1,17 +1,20 @@
 /**
  * 弱点 / 回环 / 演练日志 / 垃圾桶的数据访问层。
  *
- * 为什么不直接用 `@/api/client.ts` 里的 `weaknessApi`：
- *   1. 契约（docs/API.md 第 4/9 章）与后端实现里，**列表接口的查询参数名是
- *      `status_filter`**（`weaknessApi.list` 传的是 `status`，会被服务端忽略，
- *      于是拿不到 `archived` 分组）；优势库 / 原则库同理。
- *   2. 多个接口的响应是**包了一层**的：`{ weakness, loops, suggest_downgrade }`、
+ * 为什么这里自己包一层，而不是直接用 `@/api/client.ts` 里的通用 api：
+ *   1. 多个接口的响应是**包了一层**的：`{ weakness, loops, suggest_downgrade }`、
  *      `{ loop }`、`{ logs, hold_rate_30d }`…… 而 `types.ts` 里按扁平结构声明，
  *      直接读字段会静默拿到 undefined。
+ *   2. 这一层还补齐了 types.ts 缺失的状态取值（如 advantage 的 `removed`、
+ *      principle 的 `ignored`），避免调用方被迫写类型断言。
  *
- * 本次不允许改动 `client.ts` / `types.ts`，所以这里复用 `client.ts` 导出的
- * `apiRequest`（同一套 `credentials:'include'`、FastAPI `detail` 解析、401 跳登录、
- * 网络错误兜底），只把上面两处类型补齐。**没有新增任何 fetch 逻辑**。
+ * 【关于查询参数名（2026-10-03 更正）】
+ * 这里原本写着「列表接口的查询参数名是 `status_filter`，传 `status` 会被服务端忽略」——
+ * **这个说法不成立**。后端 `app/api/{debates,weaknesses,advantages,principles,observations}.py`
+ * 六个文件都做了 `status or status_filter` 的双名兼容（同时传时 `status` 优先），
+ * `docs/API.md` §14.1 也把这个约定写明了。
+ * 本层继续发 `status_filter` 只是为了不动既有调用，**两种写法都是对的**。
+ * （`client.ts` 里那批长期无人 import 的旧 API 对象已在同一天清理掉。）
  */
 
 import { apiRequest } from '@/api/client';
