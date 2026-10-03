@@ -5,11 +5,22 @@
 # 两个阶段：先用 Node 构建前端产物，再把产物与后端一起塞进 python-slim。
 # 这样运行镜像里没有 node_modules，也没有构建工具链。
 #
-# 【为什么这个文件很重要】
-# 仓库根 README 顶部一直带着 HuggingFace Spaces 的 frontmatter（`sdk: docker`），
-# 但**没有 Dockerfile** —— 那个 frontmatter 一直没有兑现，
-# 而国内直连 duijing.xyz 被 SNI 拦截（未备案），导致没有梯子的面试官打不开。
-# 补上这个文件之后，Spaces 就能一键部署，演示可达性问题随之解决。
+# 【为什么有这个文件】
+# 1. 容器化本身有价值：CI 里能验证镜像可构建，换任何主机都能一致地跑起来。
+# 2. 国内直连 duijing.xyz 会在 TLS 的 SNI 阶段被重置（域名未备案，实测确认），
+#    **没有梯子的面试官打不开**；套一层境外托管（如 HuggingFace Spaces）最省事，
+#    而 Spaces 需要的就是这个 Dockerfile。
+#
+# 【一个需要说清的历史（别再被 README 顶部的 frontmatter 误导）】
+# README 顶部那段 `sdk: docker` 的 frontmatter **不是给对镜准备的**，
+# 它是从青屿日记继承来的：分界前那次「整体重写为对镜」(`81becfd`) 时
+# README 被重写，但 frontmatter 原样留着（当时 title 还是「青屿日记 / 🌊」，
+# 到 `535374c` 才改成「对镜 / 🪞」）。
+# **真正用 HuggingFace Spaces 的是青屿日记** —— 它的独立仓库里
+# `hf` 远端指向 `spaces/heihei-666/qingyu-diary`，也专门有一次提交
+# `40e8ed6 添加 HF Spaces Docker YAML 元数据`。**对镜从来没有 Space，也没有 hf 远端。**
+# 所以：这段 frontmatter 对现在的对镜而言只是「如果将来要建 Space 的话正好用得上」，
+# 而不是「一个没兑现的声明」。要建就建一个**新的** Space，别去动青屿那个。
 
 # ─────────────────────────────────────────────────────────────
 # 阶段 1：构建前端
