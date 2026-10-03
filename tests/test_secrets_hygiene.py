@@ -24,16 +24,31 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
 def _git(*args: str) -> str:
+    """读 git 输出。
+
+    **必须显式指定 encoding="utf-8"**，不能依赖 `text=True` 的默认值。
+
+    `text=True` 走的是 `locale.getpreferredencoding()`：在中文 Windows 上是 cp936，
+    而 `git rev-list --all --objects` 输出的是 UTF-8（仓库里有中文文件名）。
+    结果是读取线程抛 UnicodeDecodeError、`result.stdout` 变成 `None`，
+    下一行 `.splitlines()` 直接 AttributeError ——
+    这个用例在 Ubuntu 上永远绿，只在中文 Windows 上红。
+
+    `errors="replace"` 是第二道保险：万一 git 输出真不是 UTF-8，
+    也应该让断言报「内容不对」，而不是抛一个跟断言无关的异常。
+    """
     result = subprocess.run(
         ["git", *args],
         cwd=REPO_ROOT,
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         timeout=60,
     )
     if result.returncode != 0:
-        pytest.skip(f"不是 git 仓库或 git 不可用：{result.stderr.strip()[:80]}")
-    return result.stdout
+        pytest.skip(f"不是 git 仓库或 git 不可用：{(result.stderr or '').strip()[:80]}")
+    return result.stdout or ""
 
 
 # 真实密钥的形态：sk- 后面跟一长串随机字符。

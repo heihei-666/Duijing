@@ -1,3 +1,21 @@
+# -*- coding: utf-8 -*-
+#
+# ↑ 第一行的编码声明是**必需的**，不是装饰。
+#
+# pip < 25 的 `auto_decode()` 读 requirements 文件时**不先试 UTF-8**：
+# 它只看 BOM 和 PEP 263 的 coding cookie，两个都没有就直接用
+# `locale.getpreferredencoding()` —— 中文 Windows 上是 cp936。
+# 本文件带中文注释，所以在中文 Windows 上执行
+#
+#     pip install -r requirements.txt
+#
+# 会直接炸：
+#     UnicodeDecodeError: 'gbk' codec can't decode byte 0x80 ...
+#     decoding with 'cp936' codec failed
+#
+# （实测：pip 24.0 失败，pip 26.1.1 正常——新版改成先试 UTF-8 了。）
+# 加了这行声明之后 pip 24.0 也能正常解析。改这个文件时**别把这行删掉**。
+#
 fastapi==0.115.6
 uvicorn[standard]==0.34.0
 sqlalchemy==2.0.36

@@ -1,3 +1,9 @@
+# -*- coding: utf-8 -*-
+# ↑ 这行不是装饰：pip < 25 的 auto_decode() 不先试 UTF-8，只认 BOM 和 PEP 263 cookie，
+#   两个都没有就直接用 locale 编码（中文 Windows 上是 cp936）。
+#   本文件有中文注释，于是 `pip install -r requirements-dev.txt` 会直接
+#   UnicodeDecodeError。详见 requirements.txt 顶部同样的说明。
+#
 # 开发依赖
 pytest==8.3.4
 pytest-asyncio==0.25.0

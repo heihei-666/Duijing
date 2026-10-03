@@ -92,6 +92,14 @@ AI 辩论房 → 观察弱点/优势 → 用户确认 → 建回环 → 演练 �
 
 ## 快速开始
 
+> **Windows 用户先看一眼**：`pip install -r requirements.txt` 在**中文 Windows** 上
+> 曾经会直接报 `UnicodeDecodeError: 'gbk' codec can't decode ...`——
+> 原因是 pip < 25 读 requirements 文件时不先试 UTF-8，而是用系统 locale（cp936），
+> 而文件里有中文注释。
+> **现已修复**：两个 requirements 文件的第一行都加了 PEP 263 声明（`# -*- coding: utf-8 -*-`）。
+> 如果你用的是很老的 pip 且仍然报这个错，升级即可：`python -m pip install -U pip`。
+> `tests/test_portability.py` 会守住这条声明不被误删。
+
 ### 1. 后端
 
 ```bash
@@ -103,6 +111,8 @@ cp .env.example .env
 
 ./venv/bin/uvicorn app.main:app --reload --port 3000
 ```
+
+Windows 上是 `venv\Scripts\pip.exe` / `venv\Scripts\uvicorn.exe`。
 
 打开 http://127.0.0.1:3000/docs 看自动生成的 Swagger 文档。
 
