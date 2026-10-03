@@ -8,7 +8,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, status as http_status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status as http_status
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -496,6 +496,7 @@ async def update_loop(
 async def create_log(
     loop_id: int,
     payload: LogPayload,
+    background: BackgroundTasks,
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):
@@ -503,7 +504,11 @@ async def create_log(
 
     副作用（方案 3.3）：
       · 撑住率 ≥ 80% 且触发 ≥ 5 → 返回降级建议（**不自动降级**）
+      · 同一条达标线还触发一次**原则候选提炼**（方案第 748-751 行的第二条数据流）
       · result=break → 回环进入待修订，并给出替代动作
+
+    原则提炼走 `BackgroundTasks`：它是一次真实模型调用（几秒），
+    而「记一笔」是用户最高频的动作，不能让它等模型。
     """
     loop, card = await _get_owned_loop(session, loop_id, user)
 
@@ -545,6 +550,11 @@ async def create_log(
 
     if loop_service.should_suggest_downgrade(st):
         result.update(loop_service.suggest_downgrade_payload(st))
+        # 同一条达标线，另一个出口：把「练成了」这件事沉淀成原则候选。
+        # 放在后台跑，失败也不影响上面这条演练记录（它已经落库了）。
+        background.add_task(
+            loop_service.generate_principle_candidate_task, loop.id, user.id
+        )
 
     if payload.result == "break":
         alternative = await debate_service.generate_alternative_action(

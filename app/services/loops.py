@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from datetime import date as date_type
 from datetime import timedelta
@@ -19,6 +20,8 @@ from datetime import timedelta
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.ai.prompts import build_principle_messages
+from app.ai.router import TASK_PRINCIPLE, complete, extract_json
 from app.config import settings
 from app.models import (
     Advantage,
@@ -31,6 +34,8 @@ from app.models import (
     WeaknessLoop,
 )
 from app.utils import hold_rate, local_today, now_utc, rate_bucket
+
+logger = logging.getLogger("duijing.loops")
 
 TRIGGER_RESULTS = (LoopResult.HOLD.value, LoopResult.BREAK.value)
 
@@ -304,6 +309,142 @@ def should_suggest_downgrade(stats: Stats) -> bool:
 def should_suggest_archive(stats: Stats) -> bool:
     """长期 0 触发 → 提示「是否降级为观察存档」。"""
     return stats.trigger_count == 0 and stats.not_triggered_count == 0
+
+
+# ─────────────────────────────────────────────────────────────
+# 原则候选：方案的第二条核心数据流
+# ─────────────────────────────────────────────────────────────
+#
+# 方案第 748-751 行把两条数据流定义为「这两条不断，系统就活着」：
+#
+#   1. 辩论房/事件卡 → ai_observation → 弱点/优势 → 回环 → loop_log → 撑住率
+#   2. **回环撑住率达标 → principle 候选 → 原则启用 → 反向挂回环**
+#
+# 第 2 条此前是断的：`PrincipleSource.LOOP_RATE`（方案里置信度最高的来源）
+# 从未被赋值，`TASK_PRINCIPLE` 与 `build_principle_messages()` 写好了却没有任何调用点，
+# 全仓库只有「手动新建」和「辩论房结论」两个来源。
+# 下面这个函数就是把断掉的那一段接上。
+
+
+async def maybe_create_principle_candidate(
+    session: AsyncSession,
+    *,
+    loop: WeaknessLoop,
+    user_id: int,
+) -> Principle | None:
+    """撑住率达标时，从「用户实际做对的动作」里提炼一条原则候选。
+
+    触发条件与降级提示**完全一致**（方案 3.3：撑住率 ≥80% 且触发 ≥5），
+    因为它们描述的是同一件事：「这个回环已经练成了」。
+    区别只是出口不同——降级提示是「可以收工了」，原则是「把经验留下来」。
+
+    置信度给 `high`：方案 3.6 的来源表里，「回环撑住率达标」是唯一标为高置信度的，
+    因为它是从用户**已经验证过的行为**里提炼的，不是模型凭空的建议。
+
+    **幂等**：同一个回环只生成一次（按 source_type+source_id 查重）。
+    否则用户每记一次演练就会多一条候选，原则库很快被同一个回环刷屏。
+    """
+    stats = (await loop_stats(session, [loop.id])).get(loop.id, Stats())
+    if not should_suggest_downgrade(stats):
+        return None
+
+    existing = await session.scalar(
+        select(Principle).where(
+            Principle.user_id == user_id,
+            Principle.source_type == "loop_rate",
+            Principle.source_id == loop.id,
+        )
+    )
+    if existing is not None:
+        return None
+
+    weakness = await session.get(WeaknessCard, loop.weakness_id)
+    loop_desc = "\n".join(
+        part
+        for part in (
+            f"【触发场景】{loop.trigger_scene}",
+            f"【身体/情绪信号】{loop.body_signal}" if loop.body_signal else "",
+            f"【预案】{loop.action_plan}" if loop.action_plan else "",
+            f"【对应弱点】{weakness.name}" if weakness is not None else "",
+            f"【近 30 天】撑住 {stats.hold_count} / 触发 {stats.trigger_count}"
+            f"（{stats.rate:.0f}%）",
+        )
+        if part
+    )
+
+    logs = await recent_logs(session, loop.id, limit=20)
+    logs_text = (
+        "\n".join(f"- {log.date} {log.result}｜{log.note}" for log in logs if log.note)
+        or "（用户没有写复盘备注）"
+    )
+
+    response = await complete(
+        TASK_PRINCIPLE,
+        build_principle_messages(loop_desc, logs_text),
+        temperature=0.5,
+        max_tokens=300,
+    )
+    payload = extract_json(response.text) or {}
+    content = (payload.get("content") or "").strip()
+    if not content:
+        # 提炼不出来就当没发生：宁可少一条原则，也不要塞一条空话进原则库。
+        # 调用方是后台任务，异常只会被记日志，不影响用户这一次的「记一笔」。
+        logger.info("回环 #%s 撑住率达标但未提炼出原则，跳过", loop.id)
+        return None
+
+    # 内容级去重：同一条原则可能已经从别的回环得出
+    duplicate = await session.scalar(
+        select(Principle).where(
+            Principle.user_id == user_id,
+            Principle.content == content[:200],
+        )
+    )
+    if duplicate is not None:
+        return None
+
+    principle = Principle(
+        user_id=user_id,
+        content=content[:200],
+        source_type="loop_rate",
+        source_id=loop.id,
+        status="candidate",  # 候选，等用户确认（方案 3.6：候选 → 启用 → 归档）
+        confidence="high",
+        # 方案第 751 行的「反向挂回环」：原则从哪个回环提炼出来，就挂回哪个回环。
+        # 这样用户在原则库看到它时，能直接跳回当时练的那个场景。
+        linked_loop_ids=[loop.id],
+    )
+    session.add(principle)
+    await session.flush()
+    logger.info("回环 #%s 撑住率达标，生成原则候选 #%s", loop.id, principle.id)
+    return principle
+
+
+async def generate_principle_candidate_task(loop_id: int, user_id: int) -> int | None:
+    """后台任务入口：自己开 session、自己吞异常。
+
+    为什么放后台：这是一次真实的模型调用（几秒），
+    而「记一笔」是用户日常最高频的动作，不能让它等模型。
+    失败也**不能**影响那次记录——演练日志已经落库了，原则只是附加产物。
+    """
+    from app.db import session_scope
+
+    try:
+        async with session_scope() as session:
+            loop = await session.get(WeaknessLoop, loop_id)
+            if loop is None:
+                return None
+            # 二次确认归属：后台任务不经过依赖注入，必须自己检查
+            weakness = await session.get(WeaknessCard, loop.weakness_id)
+            if weakness is None or weakness.user_id != user_id:
+                logger.warning("回环 #%s 不属于 user=%s，跳过原则提炼", loop_id, user_id)
+                return None
+            principle = await maybe_create_principle_candidate(
+                session, loop=loop, user_id=user_id
+            )
+            return principle.id if principle else None
+    except Exception:  # noqa: BLE001
+        logger.exception("回环 #%s 的原则候选生成失败（不影响演练记录）", loop_id)
+        return None
 
 
 async def archive_weakness(
