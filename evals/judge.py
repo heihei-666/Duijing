@@ -117,7 +117,17 @@ async def judge_case(
         return {"error": f"裁判 provider {JUDGE_PROVIDER} 没有配置 Key"}
 
     response = await provider.complete(
-        _build_messages(case, weakness, advantage), temperature=0.0, max_tokens=700
+        _build_messages(case, weakness, advantage),
+        temperature=0.0,
+        max_tokens=900,
+        # ⚠️ 必须显式关掉思考模式。默认（None）是「不传这个字段」→ 模型走默认的
+        # thinking=enabled + effort=high，推理 token 与正式输出**共用** max_tokens 预算。
+        # 第一次跑就是这么挂的：
+        #   AIError: deepseek 输出被 max_tokens=700 截断且 content 为空
+        #           （推理消耗了全部预算，reasoning 2638 字）
+        # app/ai/providers.py 的注释里早就记过同一个坑（复盘卡片那次），
+        # 我给 judge 又踩了一遍 —— 裁判只需要吐一个 JSON，不需要思考。
+        thinking=False,
     )
     parsed = extract_json(response.text)
     if parsed is None:
