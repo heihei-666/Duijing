@@ -34,11 +34,32 @@ python -m evals.run --mode rules
 # 规则校验 + judge 打分（需要 Key）
 python -m evals.run --mode judge
 
+# judge 单独重跑 —— 读已有的规则层报告，不重新跑生成
+python -m evals.judge --report evals/reports/rules-<时间戳>.json
+
 # 只跑前 3 条，调试用
 python -m evals.run --mode rules --limit 3
 ```
 
-报告写到 `evals/reports/<mode>-<时间戳>.json`（**不入库**，与 e2e 的产物同样处理）。
+报告写到 `evals/reports/`（**不入库**，与 e2e 的产物同样处理）。
+
+### 为什么 judge 要能单独重跑
+
+这不是洁癖，是**被真实事故逼出来的**：
+
+第一次在服务器上跑时，进程在规则层跑完、刚进入 judge 的那一刻**静默死掉**
+（非 OOM，内核无记录、内存充裕、生产服务与数据完好，原因至今未定位到）。
+而当时报告是在 judge 之后才写的 —— 于是 30 条规则层的结论**一起丢了**，
+只能从头再跑一遍，白花一次钱。
+
+改成了两件事：
+
+1. **规则层报告先落盘**，再跑 judge。跑了几分钟的成果不该由一个后续步骤决定去留
+2. **judge 独立成一条命令**，只需要 golden set + 已产出的观察，不重跑整个 App；
+   而且**每判完一条就写一次中间文件**，再崩也不会全丢
+
+用 `--mode judge` 时若 judge 中途失败，规则层报告已经保住了，
+按上面第二条命令单独重跑 judge 即可。**生成那部分的钱不会白花第二次。**
 
 ### judge 用哪个模型
 

@@ -268,7 +268,7 @@ def run(mode: str, limit: int | None) -> int:
 
     REPORTS.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    out = REPORTS / f"{mode}-{stamp}.json"
+    out = REPORTS / f"rules-{stamp}.json"
     payload = {
         "mode": mode,
         "ai_provider": os.environ["AI_PROVIDER"],
@@ -278,15 +278,29 @@ def run(mode: str, limit: int | None) -> int:
         "cases": details,
     }
 
+    # ⚠️ 规则层的报告**必须在跑 judge 之前落盘**。
+    # 这不是洁癖：第一次在服务器上跑时，进程在进入 judge 的那一刻静默死掉，
+    # 而当时报告是在 judge 之后才写的 —— 于是 30 条规则层的结论**一起丢了**，
+    # 白花了那 0.07 元。跑了几分钟的成果不该由一个后续步骤决定去留。
+    _write_report(out, payload)
+    print(f"\n规则层报告已写入：{out.relative_to(REPO_ROOT)}")
+
     if mode == "judge":
-        from evals.judge import judge_all
+        from evals.judge import judge_report
 
         print("\n开始 LLM-as-judge 打分（会调用真实模型）…")
-        payload["judge"] = judge_all(details)
+        judge_out = judge_report(out)
+        if judge_out is not None:
+            print(f"judge 报告已写入：{judge_out.relative_to(REPO_ROOT)}")
+        else:
+            print("judge 未完成 —— 规则层报告已保住，judge 可以单独重跑：")
+            print(f"  python -m evals.judge --report {out.relative_to(REPO_ROOT)}")
 
-    out.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-    print(f"\n报告已写入：{out.relative_to(REPO_ROOT)}")
     return 0 if summary["failed"] == 0 else 1
+
+
+def _write_report(path: Path, payload: dict) -> None:
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 def main() -> int:

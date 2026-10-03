@@ -26,6 +26,7 @@ from __future__ import annotations
 import json
 import os
 import statistics
+from os import PathLike
 
 from app.ai.base import ChatMessage
 from app.ai.router import extract_json
@@ -107,9 +108,11 @@ def _flatten(parsed: dict, kind: str) -> dict | None:
     return out
 
 
-async def judge_case(case: dict, weakness: str | None, advantage: str | None) -> dict:
+async def judge_case(
+    case: dict, weakness: str | None, advantage: str | None, provider=None
+) -> dict:
     """给一条用例的两条观察打分。"""
-    provider = _provider()
+    provider = provider or _provider()
     if not provider.configured:
         return {"error": f"裁判 provider {JUDGE_PROVIDER} 没有配置 Key"}
 
@@ -130,13 +133,17 @@ async def judge_case(case: dict, weakness: str | None, advantage: str | None) ->
     }
 
 
-def judge_all(details: list[dict]) -> dict:
+def judge_all(details: list[dict], partial_path=None) -> dict:
     """对整批用例打分并汇总。
 
     汇总刻意**不报一个笼统的「总分」** —— 那个数字没有行动含义。
     报的是：平均 specificity / grounded / actionability、废话条数、
     以及**跨用例重复的观察**。最后一项是「模型在套模板」的直接证据：
     12 场不同的辩论如果抽出的是同样几条观察，那它根本没在读内容。
+
+    `partial_path` 给定时，每判完一条就把中间结果落盘。
+    **这是被真实事故逼出来的**：第一次在服务器上跑，进程在进入 judge 后静默死掉，
+    30 条的打分全部丢失，只能从头再来一遍（再花一次钱）。
     """
     import asyncio
 
@@ -149,14 +156,28 @@ def judge_all(details: list[dict]) -> dict:
     ]
 
     async def _run_all() -> None:
-        for row in rows:
+        provider = _provider()
+        if not provider.configured:
+            for row in rows:
+                row["judged"] = {"error": f"裁判 provider {JUDGE_PROVIDER} 没有配置 Key"}
+            return
+        for index, row in enumerate(rows, 1):
             case = golden.get(row["id"])
             if case is None:
                 row["judged"] = {"error": "golden set 里找不到这条用例"}
-                continue
-            row["judged"] = await judge_case(
-                case, row["produced"].get("weakness"), row["produced"].get("advantage")
-            )
+            else:
+                row["judged"] = await judge_case(
+                    case,
+                    row["produced"].get("weakness"),
+                    row["produced"].get("advantage"),
+                    provider=provider,
+                )
+            mark = "·" if not row["judged"].get("error") else "!"
+            print(f"  [{index}/{len(rows)}] {mark} {row['id']}", flush=True)
+            if partial_path is not None:
+                partial_path.write_text(
+                    json.dumps({"rows": rows}, ensure_ascii=False, indent=2), encoding="utf-8"
+                )
 
     asyncio.run(_run_all())
 
@@ -204,3 +225,83 @@ def judge_all(details: list[dict]) -> dict:
         "repeated_observations": {k: v for k, v in duplicates.items() if v},
         "rows": rows,
     }
+
+
+def judge_report(source: PathLike) -> "Path | None":
+    """读一份规则层报告，给里面每条观察打分，另写一份 judge 报告。
+
+    **为什么要独立成一步**：judge 只需要 golden set + 已产出的观察，
+    完全不必把整个 App 再跑一遍。分开之后：
+      · 轻量得多（不起 FastAPI、不建库、不发几十次生成调用）
+      · 崩了可以单独重跑，不用重付生成那部分的钱
+      · 每判完一条就落盘，再崩也不会全丢
+    """
+    import json as _json
+    from datetime import datetime
+    from pathlib import Path as _Path
+
+    source = _Path(source)
+    if not source.exists():
+        print(f"❌ 找不到规则层报告：{source}")
+        return None
+
+    payload = _json.loads(source.read_text(encoding="utf-8"))
+    details = payload.get("cases") or []
+    if not details:
+        print("❌ 报告里没有 cases")
+        return None
+
+    reports_dir = source.parent
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    out = reports_dir / f"judge-{stamp}.json"
+    partial = reports_dir / f"judge-{stamp}.partial.json"
+
+    print(f"待判用例：{len(details)}   裁判：{JUDGE_PROVIDER}")
+    print(f"中间结果落盘到：{partial.name}（每判完一条写一次）")
+    verdict = judge_all(details, partial_path=partial)
+
+    merged = {
+        "mode": "judge",
+        "judge_provider": JUDGE_PROVIDER,
+        "ran_at": stamp,
+        "source_report": source.name,
+        "source_summary": payload.get("summary"),
+        "generation_usage": payload.get("usage"),
+        **verdict,
+    }
+    out.write_text(_json.dumps(merged, ensure_ascii=False, indent=2), encoding="utf-8")
+    partial.unlink(missing_ok=True)
+
+    print("\n================ judge 结果 ================")
+    avg = verdict["averages"]
+    print(f"裁判模型          : {verdict['judge_provider']}")
+    print(f"完成打分          : {verdict['judged_cases']} 条")
+    print(f"具体性  (5分制)   : {avg['specificity']}")
+    print(f"有依据  (5分制)   : {avg['grounded']}")
+    print(f"可执行性(5分制)   : {avg['actionability']}")
+    print(f"判为废话          : {verdict['generic_count']} 条")
+    print(f"判为错标          : {verdict['mislabeled_count']} 条")
+    repeated = verdict["repeated_observations"]
+    if repeated:
+        print("跨用例重复的观察（模型在套模板的直接证据）：")
+        for kind, items in repeated.items():
+            for text in items:
+                print(f"   {kind}: {text}")
+    else:
+        print("跨用例重复的观察  : 无 —— 每条观察都是针对本场辩论生成的")
+    if verdict["errors"]:
+        print(f"出错 {len(verdict['errors'])} 条：{verdict['errors'][:3]}")
+    return out
+
+
+def main() -> int:
+    import argparse
+
+    parser = argparse.ArgumentParser(description="对镜 · 评测集 judge 层（可独立重跑）")
+    parser.add_argument("--report", required=True, help="规则层报告 JSON 的路径")
+    args = parser.parse_args()
+    return 0 if judge_report(args.report) else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
