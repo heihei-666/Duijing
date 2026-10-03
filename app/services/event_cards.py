@@ -22,7 +22,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai import prompts
-from app.ai.router import TASK_CANDIDATE, TASK_EVENT_SCAN, complete, extract_json
+from app.ai.router import TASK_CANDIDATE, TASK_EVENT_SCAN
+from app.ai.structured import EventCardAnalysis, ScanCandidates, complete_json
 from app.models import (
     AIQueue,
     EventCard,
@@ -144,16 +145,27 @@ async def analyze_card(session: AsyncSession, card: EventCard) -> dict:
         return {"linked": [], "result": card.result or "not_triggered", "reason": "没有启用中的回环"}
 
     messages = prompts.build_event_card_analysis_messages(card.content, loops, weaknesses)
-    response = await complete(TASK_EVENT_SCAN, messages, temperature=0.3, max_tokens=300)
-    payload = extract_json(response.text) or {}
+    parsed, _response = await complete_json(
+        TASK_EVENT_SCAN, messages, EventCardAnalysis, temperature=0.3, max_tokens=300
+    )
 
-    raw_loop_id = payload.get("loop_id")
-    result = (payload.get("result") or "unsure").strip()
+    if parsed is None:
+        # 两次都拿不到合法输出 → 标记待确认，让用户自己看一眼。
+        # 这里**不猜**结果：方案 3.4 要求「不确定时标记待确认」，
+        # 瞎猜一个 hold/break 会直接写进撑住率，污染的是用户最核心的数据。
+        card.analyzed = True
+        card.pending_confirm = True
+        return {
+            "linked": [],
+            "result": "unsure",
+            "pending_confirm": True,
+            "reason": "AI 输出不合法，待用户确认",
+        }
+
     valid_ids = {loop.id for loop in loops}
-
-    linked: list[int] = []
-    if isinstance(raw_loop_id, int) and raw_loop_id in valid_ids:
-        linked = [raw_loop_id]
+    linked: list[int] = [parsed.loop_id] if parsed.loop_id in valid_ids else []
+    # schema 里 result 是 Literal，所以这里拿到的必定是四个合法取值之一
+    result = parsed.result
 
     card.analyzed = True
 
@@ -235,12 +247,12 @@ async def scan_recent_cards(session: AsyncSession, user_id: int, *, days: int = 
 
     cards_text = "\n".join(f"- {card.content}" for card in cards)
     messages = prompts.build_event_scan_messages(cards_text, weaknesses)
-    response = await complete(TASK_CANDIDATE, messages, temperature=0.4, max_tokens=600)
-    payload = extract_json(response.text) or {}
-
-    raw_candidates = payload.get("candidates")
-    if not isinstance(raw_candidates, list):
-        raw_candidates = []
+    parsed, _response = await complete_json(
+        TASK_CANDIDATE, messages, ScanCandidates, temperature=0.4, max_tokens=600
+    )
+    # 解析不出来就是「这次没扫到候选」，不是错误 —— 夜间批处理不该因为
+    # 一次模型输出不规范就整批失败。失败率由 ai_metrics 的 json_success_rate 暴露。
+    raw_candidates = parsed.candidates if parsed else []
 
     # 已经存在的弱点名称不再重复提出
     existing_names = {card.name.strip() for card in weaknesses}
@@ -254,9 +266,7 @@ async def scan_recent_cards(session: AsyncSession, user_id: int, *, days: int = 
 
     created = []
     for item in raw_candidates[:3]:
-        if not isinstance(item, dict):
-            continue
-        name = (item.get("name") or "").strip()
+        name = item.name.strip()
         if not name or name in existing_names or name in seen_names:
             continue
         obs = await observation_service.create_observation(

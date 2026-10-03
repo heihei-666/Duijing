@@ -506,19 +506,27 @@ class TestNoSilentMockFallback:
 
 
 class TestReviewGenerationHonesty:
-    """复盘生成失败时要报错，不能填通用鼓励语冒充 AI 观察。"""
+    """复盘生成失败时要报错，不能填通用鼓励语冒充 AI 观察。
+
+    2026-10-03 起复盘走 `app.ai.structured.complete_json`
+    （schema 校验 + 失败重试一次），所以打桩位置从 `debate_service.complete`
+    换成了 `structured.complete` —— 被测的行为没变，注入点变了。
+    """
 
     def test_review_raises_when_json_unparseable(self, monkeypatch):
         import asyncio
 
-        from app.ai import router as router_module
+        from app.ai import structured
         from app.ai.base import AIResponse
         from app.services import debate as debate_service
 
+        calls: list[int] = []
+
         async def fake_complete(*a, **kw):
+            calls.append(1)
             return AIResponse(text="抱歉，我无法完成这个任务。", finish_reason="stop")
 
-        monkeypatch.setattr(debate_service, "complete", fake_complete)
+        monkeypatch.setattr(structured, "complete", fake_complete)
 
         class FakeRoom:
             id = 1
@@ -556,12 +564,31 @@ class TestReviewGenerationHonesty:
                 )
             )
 
+        # 重试确实发生了：解析不了的内容值得再试一次（用户刚白辩了一场）
+        assert len(calls) == 2, f"应当重试一次，实际调用了 {len(calls)} 次"
+
     def test_missing_blocks_stay_empty_not_fabricated(self):
         """结构性字段缺失时留空，不填放到谁身上都成立的废话。
 
-        注意断言的是**代码**而不是源码文本——注释里会引用被删掉的旧文案
-        （说明为什么删），拿字符串搜整个源码会把注释也算进去。
+        这个保证现在落在 **schema 的默认值**上（`ReviewPayload`），
+        所以这里断言 schema 行为，而不是去源码里搜 `_text(...)` 调用。
+        行为断言比源码文本断言强：它测的是「给定空 JSON 会得到什么」，
+        而不是「代码长什么样」。
         """
+        from app.ai.structured import ReviewPayload
+
+        parsed = ReviewPayload.model_validate({})
+        for field in ("good", "notice", "next_time", "alternative_action"):
+            assert getattr(parsed, field) == "", (
+                f"{field} 的默认值是 {getattr(parsed, field)!r}，应当留空——"
+                f"通用鼓励语会被用户误认为 AI 的真实观察"
+            )
+        assert parsed.advantage is None
+        assert parsed.weakness is None
+
+    def test_review_fields_are_taken_from_the_payload_verbatim(self):
+        """再补一道源码级护栏：落库时必须直接取 payload 字段，
+        不能出现 `payload.good or "你完整走完了这场辩论"` 这类兜底。"""
         import ast
         import inspect
         import textwrap
@@ -570,26 +597,23 @@ class TestReviewGenerationHonesty:
 
         tree = ast.parse(textwrap.dedent(inspect.getsource(debate_service.generate_review)))
 
-        # 找出所有 _text(字段名, 默认值) 调用，确认默认值都是空串
-        defaults: dict[str, str] = {}
+        assigned: set[str] = set()
         for node in ast.walk(tree):
             if (
-                isinstance(node, ast.Call)
-                and isinstance(node.func, ast.Name)
-                and node.func.id == "_text"
-                and len(node.args) == 2
-                and isinstance(node.args[0], ast.Constant)
-                and isinstance(node.args[1], ast.Constant)
+                isinstance(node, ast.Assign)
+                and isinstance(node.value, ast.Call)
+                and isinstance(node.value.func, ast.Attribute)
+                and node.value.func.attr == "strip"
+                and isinstance(node.value.func.value, ast.Attribute)
+                and isinstance(node.value.func.value.value, ast.Name)
+                and node.value.func.value.value.id == "payload"
             ):
-                defaults[node.args[0].value] = node.args[1].value
+                for target in node.targets:
+                    if isinstance(target, ast.Attribute):
+                        assigned.add(target.attr)
 
-        assert defaults, "没有找到 _text(...) 调用，测试本身失效了"
-        for field in ("good", "notice", "next_time"):
-            assert field in defaults, f"{field} 应当有默认值"
-            assert defaults[field] == "", (
-                f"{field} 的默认值是 {defaults[field]!r}，应当留空——"
-                f"通用鼓励语会被用户误认为 AI 的真实观察"
-            )
+        for field in ("good", "notice", "next_time", "alternative_action"):
+            assert field in assigned, f"review.{field} 应当直接取自 payload.{field}"
 
 
 # ─────────────────────────────────────────────────────────────

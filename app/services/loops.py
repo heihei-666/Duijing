@@ -21,7 +21,8 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai.prompts import build_principle_messages
-from app.ai.router import TASK_PRINCIPLE, complete, extract_json
+from app.ai.router import TASK_PRINCIPLE
+from app.ai.structured import PrincipleCandidate, complete_json
 from app.config import settings
 from app.models import (
     Advantage,
@@ -378,14 +379,14 @@ async def maybe_create_principle_candidate(
         or "（用户没有写复盘备注）"
     )
 
-    response = await complete(
+    payload, _response = await complete_json(
         TASK_PRINCIPLE,
         build_principle_messages(loop_desc, logs_text),
+        PrincipleCandidate,
         temperature=0.5,
         max_tokens=300,
     )
-    payload = extract_json(response.text) or {}
-    content = (payload.get("content") or "").strip()
+    content = payload.content.strip() if payload else ""
     if not content:
         # 提炼不出来就当没发生：宁可少一条原则，也不要塞一条空话进原则库。
         # 调用方是后台任务，异常只会被记日志，不影响用户这一次的「记一笔」。

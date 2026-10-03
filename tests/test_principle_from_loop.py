@@ -104,8 +104,8 @@ class TestPrincipleFromHoldRate:
 
     def test_ai_failure_does_not_break_recording(self, client, unique_name, monkeypatch):
         """原则提炼是后台附加产物；模型挂了也必须能正常记这一笔。"""
+        from app.ai import structured
         from app.ai.base import AIError
-        from app.services import loops as loop_service
 
         actor = register(client, unique_name("plrfail"))
         card = make_weakness(actor, "我的弱点：爱打断")
@@ -114,7 +114,8 @@ class TestPrincipleFromHoldRate:
         async def boom(*args, **kwargs):
             raise AIError("模拟模型不可用")
 
-        monkeypatch.setattr(loop_service, "complete", boom)
+        # 原则提炼走 app.ai.structured.complete_json，打桩要打在它用的那个名字上
+        monkeypatch.setattr(structured, "complete", boom)
 
         for i in range(THRESHOLD_HOLDS):
             # 不能因为 AI 挂了就 500 —— 这条断言就是本用例的全部意义

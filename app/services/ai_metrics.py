@@ -170,6 +170,19 @@ class _Totals:
     by_provider: dict[str, int] = field(default_factory=dict)
     by_task: dict[str, int] = field(default_factory=dict)
     latencies: deque[int] = field(default_factory=lambda: deque(maxlen=500))
+    # 结构化输出的解析成功率。
+    #
+    # 记**两组**数，因为它们回答的是不同的问题：
+    #   json_attempts / json_failures  —— 按**尝试**计。反映模型本身的合规度，
+    #                                    改 prompt 时盯这个。
+    #   json_calls    / json_call_failures —— 按**逻辑调用**计（重试后仍失败才算失败）。
+    #                                    这才是「用户的操作有没有失败」。
+    # 只看前者会把「重试救回来了」也记成失败，高估问题严重性。
+    json_attempts: int = 0
+    json_failures: int = 0
+    json_calls: int = 0
+    json_call_failures: int = 0
+    json_failures_by_task: dict[str, int] = field(default_factory=dict)
 
     def merge(self, entry: dict) -> None:
         self.calls += 1
@@ -191,6 +204,29 @@ class _Totals:
 
 
 _totals = _Totals()
+
+
+def record_json_attempt(*, ok: bool, task: str) -> None:
+    """记一次**尝试**的校验结果（重试会记多次）。"""
+    try:
+        _totals.json_attempts += 1
+        if not ok:
+            _totals.json_failures += 1
+            _totals.json_failures_by_task[task] = (
+                _totals.json_failures_by_task.get(task, 0) + 1
+            )
+    except Exception:  # noqa: BLE001
+        logger.exception("JSON 结果记录失败（不影响业务）")
+
+
+def record_json_call(*, ok: bool, task: str) -> None:
+    """记一次**逻辑调用**的最终结果（重试后仍失败才算失败）。"""
+    try:
+        _totals.json_calls += 1
+        if not ok:
+            _totals.json_call_failures += 1
+    except Exception:  # noqa: BLE001
+        logger.exception("JSON 结果记录失败（不影响业务）")
 
 
 def _percentile(values: list[int], pct: float) -> int | None:
@@ -222,6 +258,23 @@ def snapshot() -> dict:
         "by_task": dict(_totals.by_task),
         "buffered": len(_buffer),
         "dropped": _totals.dropped,
+        # 结构化输出质量：prompt 改动的即时反馈
+        "json_attempts": _totals.json_attempts,
+        "json_failures": _totals.json_failures,
+        "json_success_rate": (
+            round(1 - _totals.json_failures / _totals.json_attempts, 4)
+            if _totals.json_attempts
+            else None
+        ),
+        "json_calls": _totals.json_calls,
+        "json_call_failures": _totals.json_call_failures,
+        # 用户视角的成功率：重试救回来的不算失败
+        "json_call_success_rate": (
+            round(1 - _totals.json_call_failures / _totals.json_calls, 4)
+            if _totals.json_calls
+            else None
+        ),
+        "json_failures_by_task": dict(_totals.json_failures_by_task),
     }
 
 

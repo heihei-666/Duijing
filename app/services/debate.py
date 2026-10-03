@@ -25,8 +25,8 @@ from app.ai.router import (
     TASK_REVIEW_CARD,
     TASK_TOPIC,
     complete,
-    extract_json,
 )
+from app.ai.structured import ReviewPayload, TopicSuggestion, complete_json
 from app.config import settings
 from app.models import (
     Advantage,
@@ -204,13 +204,30 @@ async def load_history(session: AsyncSession, room_id: int, *, limit: int = 40) 
 
 
 async def generate_topic(scene: str, context: DebateContext) -> tuple[str, str]:
-    """把用户输入的场景转成辩题。"""
-    messages = prompts.build_topic_messages(scene, context.weaknesses)
-    response = await complete(TASK_TOPIC, messages, temperature=0.8, max_tokens=300)
-    payload = extract_json(response.text) or {}
+    """把用户输入的场景转成辩题。
 
-    topic = (payload.get("topic") or "").strip() or scene.strip()[:60]
-    stance = (payload.get("stance") or "").strip()
+    走 `complete_json` 而不是手工 `extract_json`：后者在这里有一个**真实可触发**的
+    崩溃 —— `(payload.get("topic") or "").strip()` 遇到 `{"topic": 123}` 或
+    `{"topic": [...]}` 会直接 AttributeError，冒到全局处理器变成 500。
+    现在由 schema 挡住类型错误，并且不合法时会带错误重试一次。
+    """
+    messages = prompts.build_topic_messages(scene, context.weaknesses)
+    parsed, response = await complete_json(
+        TASK_TOPIC, messages, TopicSuggestion, temperature=0.8, max_tokens=300
+    )
+
+    if parsed is None:
+        # 两次都拿不到合法 JSON：退回用户自己的场景描述。
+        # 辩题生成是「锦上添花」，不该因为它整条建辩论的链路失败。
+        logger.warning(
+            "辩题 JSON 两次都不合法，回退用场景原文 finish=%s 原文前120字=%r",
+            getattr(response, "finish_reason", ""),
+            (getattr(response, "text", "") or "")[:120],
+        )
+        return scene.strip()[:60], ""
+
+    topic = parsed.topic.strip() or scene.strip()[:60]
+    stance = parsed.stance.strip()
     return topic, stance
 
 
@@ -274,26 +291,26 @@ async def generate_review(
     )
     # max_tokens 给足：即便已关闭思考模式，复盘要输出 6 个字段的 JSON，
     # 600 以下很容易被截断，截断的 JSON 解析出来是 None。
-    response = await complete(TASK_REVIEW_CARD, messages, temperature=0.6, max_tokens=1500)
+    #
+    # 走 complete_json：schema 挡住类型错误，不合法时带错误重试一次。
+    # 重试对复盘特别有价值 —— 这里失败一次就是用户白辩一场。
+    payload, response = await complete_json(
+        TASK_REVIEW_CARD, messages, ReviewPayload, temperature=0.6, max_tokens=1500
+    )
 
-    if response.truncated:
-        logger.warning("复盘输出被截断 room=%s finish_reason=length", room.id)
-
-    payload = extract_json(response.text)
     if payload is None:
+        truncated = bool(response and response.truncated)
         logger.error(
-            "复盘 JSON 解析失败 room=%s finish=%s 原文前200字=%r",
-            room.id, response.finish_reason, (response.text or "")[:200],
+            "复盘 JSON 两次都不合法 room=%s finish=%s 原文前200字=%r",
+            room.id,
+            getattr(response, "finish_reason", ""),
+            (getattr(response, "text", "") or "")[:200],
         )
+        # 刻意不做「兜底文案」：假的观察会一路污染弱点库，
+        # 而弱点库是这个产品最不能脏的数据（见 ReviewGenerationError 的说明）。
         raise ReviewGenerationError(
-            "AI 返回的复盘内容无法解析，请稍后重试"
-            if not response.truncated
-            else "AI 复盘输出被截断，请重试"
+            "AI 复盘输出被截断，请重试" if truncated else "AI 返回的复盘内容无法解析，请稍后重试"
         )
-
-    def _text(key: str, fallback: str) -> str:
-        value = payload.get(key)
-        return value.strip() if isinstance(value, str) and value.strip() else fallback
 
     review = await session.scalar(
         select(DebateReview).where(DebateReview.room_id == room.id)
@@ -305,10 +322,10 @@ async def generate_review(
     # 结构性字段缺失时留空串，由前端决定怎么展示；
     # 不填「你完整走完了这场辩论」这种放到谁身上都成立的废话——
     # 那会让用户以为 AI 真的观察了他。
-    review.good = _text("good", "")
-    review.notice = _text("notice", "")
-    review.next_time = _text("next_time", "")
-    review.alternative_action = _text("alternative_action", "")
+    review.good = payload.good.strip()
+    review.notice = payload.notice.strip()
+    review.next_time = payload.next_time.strip()
+    review.alternative_action = payload.alternative_action.strip()
     review.generated_at = now_utc()
     await session.flush()
 
@@ -316,43 +333,46 @@ async def generate_review(
     return review, created
 
 
-async def _create_observations(session: AsyncSession, room: DebateRoom, payload: dict) -> list:
+async def _create_observations(
+    session: AsyncSession, room: DebateRoom, payload: ReviewPayload
+) -> list:
     """把复盘里的观察写进候选区。
 
-    硬约束：最多 1 条优势 + 1 条弱点。多出来的直接丢弃，
-    不因为模型多给了就多存。
+    硬约束（方案第九章第 5 条）：**最多 1 条优势 + 1 条弱点**。
+    多出来的直接丢弃，不因为模型多给了就多存。
+
+    注意 `ReviewPayload` 的 validator 已经把「本该是对象却是字符串」的写法
+    归一化过了 —— 旧代码在这种情况下会静默丢观察，那等于白白浪费一次模型输出。
     """
     created = []
 
-    weakness = payload.get("weakness")
-    if isinstance(weakness, dict):
-        name = (weakness.get("name") or "").strip()
-        if name:
-            created.append(
-                await observation_service.create_observation(
-                    session,
-                    user_id=room.user_id,
-                    obs_type="weakness",
-                    content=name,
-                    source_type="debate",
-                    source_id=room.id,
-                )
+    weakness = payload.weakness
+    name = (weakness.name if weakness else "").strip()
+    if name:
+        created.append(
+            await observation_service.create_observation(
+                session,
+                user_id=room.user_id,
+                obs_type="weakness",
+                content=name,
+                source_type="debate",
+                source_id=room.id,
             )
+        )
 
-    advantage = payload.get("advantage")
-    if isinstance(advantage, dict):
-        name = (advantage.get("name") or "").strip()
-        if name:
-            created.append(
-                await observation_service.create_observation(
-                    session,
-                    user_id=room.user_id,
-                    obs_type="advantage",
-                    content=name,
-                    source_type="debate",
-                    source_id=room.id,
-                )
+    advantage = payload.advantage
+    name = (advantage.name if advantage else "").strip()
+    if name:
+        created.append(
+            await observation_service.create_observation(
+                session,
+                user_id=room.user_id,
+                obs_type="advantage",
+                content=name,
+                source_type="debate",
+                source_id=room.id,
             )
+        )
 
     return created
 
