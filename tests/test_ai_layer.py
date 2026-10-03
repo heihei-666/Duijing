@@ -99,8 +99,46 @@ class TestCachePrefix:
         assert "已归档的" not in text
 
     def test_prompt_version_is_pinned(self):
-        """版本号变更会让全部历史缓存失效，必须是有意识的改动。"""
-        assert prompts.PROMPT_VERSION == "duijing-sys-v1"
+        """版本号变更会让全部历史缓存失效，必须是有意识的改动。
+
+        原来的写法是硬编码 `== "duijing-sys-v1"`。加了复盘 prompt 的 A/B 之后，
+        版本号由 `REVIEW_PROMPT_VERSION` 派生 —— 所以这里改成守**派生关系**，
+        而不是守某个具体字符串。原意（版本必须显式、改动必须是有意识的）不变。
+        """
+        assert prompts.PROMPT_VERSION == f"duijing-sys-{prompts.REVIEW_PROMPT_VERSION}"
+        assert prompts.PROMPT_VERSION.startswith("duijing-sys-")
+
+    def test_review_prompt_versions_are_actually_different(self):
+        """两版复盘 prompt 必须是**真的不同**。
+
+        否则 A/B 会跑出两份一模一样的报告，还让人以为做了对比 ——
+        这种「看起来在评测」的假象比没有评测更糟。
+        """
+        assert prompts._REVIEW_SYSTEM_V1 != prompts._REVIEW_SYSTEM_V2
+
+        # v2 承诺改进的三件事，逐条验证它真的写了
+        v2 = prompts._REVIEW_SYSTEM_V2
+        assert "论证结构" in v2, "v2 必须给出观察四层（v1 完全没有，是错标的主因）"
+        assert "立场坚定" in v2, "v2 必须把「立场坚定」这类空标签明确列出来"
+        assert "原样引用" in v2, "v2 必须要求 reason 引用用户原话（可验证的硬约束）"
+
+    def test_review_prompt_version_selectable_by_env(self, monkeypatch):
+        """A/B 靠环境变量切换，两条分支都要能走通。"""
+        import importlib
+
+        for want in ("v1", "v2"):
+            monkeypatch.setenv("REVIEW_PROMPT_VERSION", want)
+            reloaded = importlib.reload(prompts)
+            assert reloaded.REVIEW_PROMPT_VERSION == want
+            assert reloaded.PROMPT_VERSION == f"duijing-sys-{want}"
+            messages = reloaded.build_review_messages("辩题", "该", "【第1轮】用户：x")
+            expected = (
+                reloaded._REVIEW_SYSTEM_V1 if want == "v1" else reloaded._REVIEW_SYSTEM_V2
+            )
+            assert messages[0].content.startswith(expected[:60])
+
+        monkeypatch.delenv("REVIEW_PROMPT_VERSION", raising=False)
+        importlib.reload(prompts)
 
     def test_debate_messages_stable_system_is_first(self):
         """可变内容绝不能混进第一条 system 消息。"""
