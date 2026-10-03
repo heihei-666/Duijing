@@ -209,16 +209,78 @@ def _first_json_object(text: str) -> str | None:
     return None
 
 
+def _resolve_provider_name(mode: str, *, needs_reasoning: bool) -> str:
+    """按当前配置算出**这类任务实际会用到**的 provider。
+
+    抽出来是为了让 `/api/health` 和 `get_provider()` 用同一套判断，
+    避免两处各写一遍然后慢慢漂移。
+    """
+    deepseek_ok = bool(settings.DEEPSEEK_API_KEY)
+    mimo_ok = bool(settings.MIMO_API_KEY)
+
+    if mode == "mock":
+        return "mock"
+    if mode == "deepseek":
+        return "deepseek" if deepseek_ok else "mock"
+    if mode == "mimo":
+        return "mimo" if mimo_ok else "mock"
+    if mode == "hybrid":
+        if needs_reasoning:
+            return "deepseek" if deepseek_ok else "mock"
+        return "mimo" if mimo_ok else "mock"
+    # 未知取值：get_provider() 也会回退到 mock，这里保持一致
+    return "mock"
+
+
 def provider_status() -> dict:
-    """给 /api/health 用的诊断信息，不泄露 Key 本身。"""
-    return {
-        "mode": settings.AI_PROVIDER,
-        "deepseek_configured": bool(settings.DEEPSEEK_API_KEY),
-        "deepseek_model": settings.DEEPSEEK_MODEL,
-        "mimo_configured": bool(settings.MIMO_API_KEY),
-        "mimo_model": settings.MIMO_MODEL,
+    """给 /api/health 用的诊断信息，不泄露 Key 本身。
+
+    【这里曾经是错的，改动前请先读】
+
+    原来的写法是：
+
         "degraded": settings.AI_PROVIDER != "mock"
-        and not (settings.DEEPSEEK_API_KEY or settings.MIMO_API_KEY),
+        and not (settings.DEEPSEEK_API_KEY or settings.MIMO_API_KEY)
+
+    只要**任意一个** Key 存在，`degraded` 就是 False。
+    于是在 `hybrid` 模式下只配了 DeepSeek Key 时：
+    所有走 MiMo 的任务（复盘、辩题、事件卡扫描、回环对话、候选生成）
+    全部静默降级成 Mock，而 `/api/health` 一路报告「健康」。
+
+    这恰好违反了这个项目自己最看重的原则 —— 「宁可显式失败，
+    也不要产生看起来像真的假数据」。运行时确实不造假了，但配置这条路径上
+    还有一个洞：Mock 的内容在 API 响应里和真实输出**看起来完全一样**。
+
+    现在改成**按任务族分别判断**，并额外给出 `degraded_tasks`，
+    让「哪一类任务在跑假数据」变得可见。
+    """
+    mode = settings.AI_PROVIDER
+    deepseek_configured = bool(settings.DEEPSEEK_API_KEY)
+    mimo_configured = bool(settings.MIMO_API_KEY)
+
+    # 辩论房对话走推理模型，其余都是结构化短输出 —— 对应 REASONING_TASKS 的划分
+    debate_provider = _resolve_provider_name(mode, needs_reasoning=True)
+    structured_provider = _resolve_provider_name(mode, needs_reasoning=False)
+
+    degraded_tasks: list[str] = []
+    if mode != "mock":
+        if debate_provider == "mock":
+            degraded_tasks.append("debate_reply")
+        if structured_provider == "mock":
+            degraded_tasks.append("review/topic/scan/loop_dialog/candidate")
+
+    return {
+        "mode": mode,
+        "deepseek_configured": deepseek_configured,
+        "deepseek_model": settings.DEEPSEEK_MODEL,
+        "mimo_configured": mimo_configured,
+        "mimo_model": settings.MIMO_MODEL,
+        # 两类任务各自实际会用到谁
+        "debate_provider": debate_provider,
+        "structured_provider": structured_provider,
+        # 只要**有任何一类**任务在跑 Mock，就算降级
+        "degraded": bool(degraded_tasks),
+        "degraded_tasks": degraded_tasks,
     }
 
 

@@ -30,6 +30,7 @@ from app.api import (
 )
 from app.api import status_bar
 from app.api import weaknesses
+from app.ai.base import AIError
 from app.ai.router import provider_status
 from app.config import settings
 from app.db import healthcheck, init_db
@@ -72,6 +73,30 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.exception_handler(AIError)
+async def ai_error_handler(request: Request, exc: AIError):
+    """AI 调用失败 → 502，而不是一条没有任何信息的 500。
+
+    这个项目**刻意不做**「模型失败就悄悄换 Mock」的兜底（见 app/ai/router.py
+    里那段说明：假观察会一路污染弱点库）。所以模型失败时异常会一路上抛。
+
+    但上抛到原来的全局处理器，用户只会看到「服务器内部错误」——
+    既分不清是代码 bug 还是模型抽风，也不知道能不能重试。
+    这里把它单独接住，给出**明确可重试**的信号，并记 warning 而不是 exception
+    （它不是 bug，是外部依赖故障，不该污染错误告警）。
+
+    注意：SSE 端点和 /finish 已有各自的处理（error 事件 / 502），
+    它们自己 catch 了，不会走到这里。
+    """
+    logger.warning(
+        "AI 调用失败 %s %s：%s", request.method, request.url.path, exc
+    )
+    return JSONResponse(
+        status_code=502,
+        content={"detail": "AI 服务暂时不可用，请稍后重试"},
+    )
 
 
 @app.exception_handler(Exception)
