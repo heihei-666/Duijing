@@ -109,7 +109,7 @@ class TestCachePrefix:
         assert prompts.PROMPT_VERSION.startswith("duijing-sys-")
 
     def test_review_prompt_versions_are_actually_different(self):
-        """两版复盘 prompt 必须是**真的不同**。
+        """各版复盘 prompt 必须是**真的不同**。
 
         否则 A/B 会跑出两份一模一样的报告，还让人以为做了对比 ——
         这种「看起来在评测」的假象比没有评测更糟。
@@ -122,19 +122,41 @@ class TestCachePrefix:
         assert "立场坚定" in v2, "v2 必须把「立场坚定」这类空标签明确列出来"
         assert "原样引用" in v2, "v2 必须要求 reason 引用用户原话（可验证的硬约束）"
 
+        # v2.1 只加了一件事：把「给 null」限定在两条观察上
+        assert prompts._REVIEW_SYSTEM_V2_1 != v2
+        assert "good / notice / next_time 三个块必须有内容" in prompts._REVIEW_SYSTEM_V2_1
+
+    def test_v2_1_delta_anchor_is_intact(self):
+        """v2.1 是 v2 的**显式增量**（一次 .replace）。
+
+        如果将来有人改了 v2 结尾那句话，replace 会静默失配 ——
+        v2.1 就悄悄退化成「等于 v2」，而 A/B 会跑出两份一样的报告。
+        模块加载时的 assert 是第一道防线，这里再明确测一次。
+        """
+        assert prompts._NULL_RULE_V2 in prompts._REVIEW_SYSTEM_V2
+        assert (
+            prompts._REVIEW_SYSTEM_V2_1.count(prompts._NULL_RULE_V2_1) == 1
+        ), "v2.1 里必须正好有一处作用域限定后的 null 规则"
+        # 旧的那句无条件 null 规则不能在 v2.1 里残留
+        assert prompts._NULL_RULE_V2 not in prompts._REVIEW_SYSTEM_V2_1
+
+    def test_all_declared_versions_resolve(self):
+        """查表里的每个版本都要能取到，默认值也必须在表里。"""
+        assert prompts.REVIEW_PROMPT_VERSION in prompts._REVIEW_SYSTEMS
+        for name, text in prompts._REVIEW_SYSTEMS.items():
+            assert text and len(text) > 100, f"{name} 的 prompt 不像完整内容"
+
     def test_review_prompt_version_selectable_by_env(self, monkeypatch):
-        """A/B 靠环境变量切换，两条分支都要能走通。"""
+        """A/B 靠环境变量切换，每条分支都要能走通。"""
         import importlib
 
-        for want in ("v1", "v2"):
+        for want in ("v1", "v2", "v2.1"):
             monkeypatch.setenv("REVIEW_PROMPT_VERSION", want)
             reloaded = importlib.reload(prompts)
             assert reloaded.REVIEW_PROMPT_VERSION == want
             assert reloaded.PROMPT_VERSION == f"duijing-sys-{want}"
             messages = reloaded.build_review_messages("辩题", "该", "【第1轮】用户：x")
-            expected = (
-                reloaded._REVIEW_SYSTEM_V1 if want == "v1" else reloaded._REVIEW_SYSTEM_V2
-            )
+            expected = reloaded._REVIEW_SYSTEMS[want]
             assert messages[0].content.startswith(expected[:60])
 
         monkeypatch.delenv("REVIEW_PROMPT_VERSION", raising=False)

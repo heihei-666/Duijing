@@ -37,7 +37,7 @@ from app.ai.base import ChatMessage
 # 版本号会随每次 AI 调用落进 ai_call_log.prompt_version，
 # 所以事后能回答「这条观察是哪个版本的 prompt 产出的」——
 # 这正是上一轮做 prompt_version 埋点的用意。
-REVIEW_PROMPT_VERSION = os.environ.get("REVIEW_PROMPT_VERSION", "v2")
+REVIEW_PROMPT_VERSION = os.environ.get("REVIEW_PROMPT_VERSION", "v2.1")
 
 # 缓存前缀已经带上版本号，切版本会自动让旧缓存失效（这是想要的行为）
 PROMPT_VERSION = f"duijing-sys-{REVIEW_PROMPT_VERSION}"
@@ -410,6 +410,56 @@ _REVIEW_SYSTEM_V2 = (
     '若某一项确实没有依据，对应值给 null。不要编造。'
 )
 
+# ─────────────────────────────────────────────────────────────
+# v2.1 —— 修掉 v2 自己引入的回归
+#
+# 评测实测：v2 三个质量分全面优于 v1（具体性 +0.60、有依据 +0.37、可执行性 +0.52，
+# 废话 −54%、错标 −56%），**但规则层通过率从 100% 掉到 96.7%**：
+# arg-01 的 next_time 复盘块变成**空**。
+#
+# 原因是 v2 结尾那句「若某一项确实没有依据，对应值给 null。不要编造」——
+# 它的**作用域外溢到了叙事块**。模型对没把握的内容一律给 null，
+# 连「下次可以怎么改」都不写了。
+# 用户打开复盘卡片看到一个空白栏，比看到一句平实的评价更糟。
+#
+# v2.1 只做一件事：把那条规则**限定在两条观察上**，三个叙事块反过来必须写。
+# 这是一个**显式增量**而不是又抄一整份 prompt —— 差异一眼可见，
+# 而且锚点失配时下面的 assert 会直接拦住，不会静默变成「v2.1 其实等于 v2」。
+# ─────────────────────────────────────────────────────────────
+
+_NULL_RULE_V2 = "若某一项确实没有依据，对应值给 null。不要编造。"
+
+_NULL_RULE_V2_1 = (
+    "【「给 null」只适用于两条观察】\n"
+    "上面那句「没有依据就给 null」**只针对 weakness 和 advantage**。\n"
+    "**good / notice / next_time 三个块必须有内容**，不许给 null、不许留空 ——"
+    "用户打开复盘卡片看到空白栏，比看到一句平实的评价更糟。\n"
+    "这三块写得朴素没关系，但不能空；「多注意」「要改进」这种也给不了用户任何东西。\n"
+    "\n"
+    "正例：\n"
+    '  "good":      "第1轮先复述了对方观点再反驳，对方没有被打断的感觉"\n'
+    '  "notice":    "被连续追问三轮后，回应从两句话缩到一句话"\n'
+    '  "next_time": "被追问到第三次时，直接说「这点我还没想清楚」"\n'
+    "\n"
+    "反例（**不要**）：\n"
+    '  "next_time": null       ← 空着最糟\n'
+    '  "next_time": "以后多注意"  ← 有字但等于没说\n'
+    "\n"
+    "只有 weakness 和 advantage 在真的没有依据时才给 null。"
+)
+
+assert _NULL_RULE_V2 in _REVIEW_SYSTEM_V2, (
+    "v2 的锚点变了 —— v2.1 的增量拼接会静默失效。请同步更新 _NULL_RULE_V2。"
+)
+_REVIEW_SYSTEM_V2_1 = _REVIEW_SYSTEM_V2.replace(_NULL_RULE_V2, _NULL_RULE_V2_1)
+
+# 版本 → prompt。查表而不是 if/else，加版本时不会漏改分支。
+_REVIEW_SYSTEMS = {
+    "v1": _REVIEW_SYSTEM_V1,
+    "v2": _REVIEW_SYSTEM_V2,
+    "v2.1": _REVIEW_SYSTEM_V2_1,
+}
+
 
 def build_review_messages(
     topic: str,
@@ -426,7 +476,7 @@ def build_review_messages(
     第二个位置参数是**用户档案上下文**（build_context_blocks 的产物），
     不是 build_stable_system 的产物——后者含辩论人格，会让模型继续辩论。
     """
-    system = _REVIEW_SYSTEM_V1 if REVIEW_PROMPT_VERSION == "v1" else _REVIEW_SYSTEM_V2
+    system = _REVIEW_SYSTEMS.get(REVIEW_PROMPT_VERSION, _REVIEW_SYSTEM_V2_1)
     user = (
         f"【辩题】{topic}\n【用户立场】{stance or '未声明'}\n"
         f"【对手风格】{_level_cn(level)}\n\n【辩论记录】\n{transcript}"
