@@ -105,9 +105,7 @@ jobs:
       - uses: actions/checkout@v4
 
       # 只验证能构建出来，不推送。
-      # 想拿今天这份镜像去做演示站的话，HuggingFace Spaces 是最省事的一条路
-      # （国内直连 duijing.xyz 在 SNI 阶段被拦），但要注意：
-      # **青屿日记已经占用了一个 Space**（heihei-666/qingyu-diary），
-      # 对镜要用就得新建一个 —— 详见 README「方式三」。
+      # 想拿这份镜像做演示站的话见 README「方式三」——
+      # 国内直连 duijing.xyz 会在 TLS 的 SNI 阶段被重置，所以演示站要放境外平台。
       - name: 构建镜像
         run: docker build -t duijing:ci .

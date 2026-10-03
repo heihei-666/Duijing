@@ -1,5 +1,8 @@
 # 对镜
 
+[![CI](https://github.com/heihei-666/Duijing/actions/workflows/ci.yml/badge.svg)](https://github.com/heihei-666/Duijing/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 > 用 AI 辩论房照见自己，用弱点回环改善自己。
 
 个人成长工作台。系统只做三件事：**帮用户发现弱点**（AI 辩论房 + 事件卡扫描）、
@@ -45,15 +48,16 @@ AI 辩论房 → 观察弱点/优势 → 用户确认 → 建回环 → 演练 �
 │   ├── main.py             # FastAPI 入口
 │   ├── config.py           # 全部配置走环境变量
 │   ├── db.py               # SQLite + WAL，PRAGMA 按方案配置
-│   ├── models.py           # 16 张表
+│   ├── models.py           # 19 张表
 │   ├── security.py         # bcrypt + JWT
 │   ├── deps.py             # httpOnly Cookie 认证
 │   ├── utils.py            # 时区、撑住率、邀请码
 │   ├── ai/                 # AI 可插拔层
 │   │   ├── base.py         #   Provider 协议
 │   │   ├── providers.py    #   DeepSeek / MiMo（OpenAI 兼容）
+│   │   ├── structured.py   #   ★ 结构化输出：schema 校验 + 失败重试一次
 │   │   ├── mock.py         #   Mock：无 Key 也能跑通全链路
-│   │   ├── prompts.py      #   ★ 缓存前缀组装（顺序不可变）
+│   │   ├── prompts.py      #   ★ 缓存前缀组装（顺序不可变）+ prompt 版本管理
 │   │   └── router.py       #   ★ 路由决策表 + JSON 解析
 │   ├── services/           # 业务逻辑
 │   │   ├── loops.py        #   ★ 撑住率、演练日志、降级判定
@@ -61,10 +65,17 @@ AI 辩论房 → 观察弱点/优势 → 用户确认 → 建回环 → 演练 �
 │   │   ├── debate.py       #   辩论房编排
 │   │   ├── observations.py #   ★ 24 小时从「首次看到」算
 │   │   ├── event_cards.py  #   事件卡匹配与扫描
+│   │   ├── ai_metrics.py   #   ★ 调用用量/延迟/缓存命中/成本，落 ai_call_log
+│   │   ├── ai_queue.py     #   ★ 真队列：认领 / 执行 / 重试 / 回收 / 积压可见
 │   │   └── scheduler.py    #   夜间定时任务
-│   └── api/                # 路由层
+│   └── api/                # 路由层（admin.py 提供 /api/admin/ai-stats）
 ├── web/                    # 前端（React + Vite）
 │   └── src/styles/tokens.css   # ★ 配色方案的全部 CSS 变量
+├── evals/                  # ★ 评测集（回答「改了 prompt 怎么知道变好了」）
+│   ├── checks.py           #   规则层：确定性、免费、进 CI
+│   ├── judge.py            #   LLM-as-judge：换源打分，可独立重跑
+│   ├── run.py              #   运行器：走和生产一样的链路
+│   └── golden/             #   golden set
 ├── deploy/                 # 部署
 │   ├── DEPLOY.md           #   完整部署手册
 │   ├── nginx.conf          #   ★ SSE 必须关 proxy_buffering
@@ -73,7 +84,9 @@ AI 辩论房 → 观察弱点/优势 → 用户确认 → 建回环 → 演练 �
 │   ├── API.md              # ★ 前后端契约（改字段先改这里）
 │   ├── 新方案.txt           #   产品方案
 │   └── 配色方案.txt         #   设计规范
-└── tests/                  # 测试
+├── Dockerfile              # 两阶段构建（Node 产物 + python-slim）
+├── .github/workflows/      # CI：5 个作业，含 Windows 中文编码专项与评测集
+└── tests/                  # 279 项测试
 ```
 
 标 ★ 的文件集中了系统里最容易写错、且写错后会静默损害用户数据的逻辑，
@@ -151,8 +164,15 @@ MIMO_API_KEY=xxx                # 复盘 / 辩题 / 扫描 / 回环对话
 | `mimo` | 全部走 MiMo |
 | `hybrid` | 辩论房走 DeepSeek，其余走 MiMo |
 
-> Key 没配或调用失败时**自动降级到 Mock 并打警告日志**，
-> 不会让用户看到 500。降级状态可在 `GET /api/health` 的 `ai.degraded` 看到。
+> ⚠️ **AI 调用失败时，不会悄悄换成 Mock。** 这是刻意的设计：
+> 超时或报错时如果返回一段**看起来很像真的**模拟观察，
+> 它会以「AI 的真实判断」被写进弱点库——而这个产品最不能脏的就是这份数据。
+> 所以失败会**显式报错（HTTP 502）**，让用户重试。
+>
+> **「没配 Key」是另一回事**：那属于**明确的降级模式**，在选 Provider 的阶段就决定了，
+> 可在 `GET /api/health` 的 `ai.degraded` / `degraded_tasks` 看到。
+> 降级状态**按任务族分别判断**（此前是「只要任意一个 Key 存在就算健康」——
+> 那个判断是错的：配了 DeepSeek 却没配 MiMo 时，复盘会失败而健康检查一路报告正常）。
 
 ### 成本控制
 
@@ -295,35 +315,82 @@ AI 内容由规则生成但走的是同一条业务路径。
 
 > ⚠️ **不要把真实 Key 放到公开的演示站上**，那会把你的额度烧掉。
 
-### 方式三：HuggingFace Spaces（让国内面试官点得开）
+### 方式三：任意容器平台
 
-配合根目录的 `Dockerfile` 可以部署。
+镜像已通过 CI 构建验证，可以直接部署到任何支持 Docker 的平台。
 
-> ⚠️ **先说清楚一件事。**
-> 本文件顶部**曾经**有一段 `sdk: docker` 的 HuggingFace Spaces frontmatter，
-> 已于 2026-10-03 移除。它**不是为对镜加的**，是**从青屿日记继承来的**：
-> 分界前那次「整体重写为对镜」时 README 被重写，但那段原样留着
-> （title 当时还是「青屿日记 / 🌊」，到 `535374c` 才改成「对镜 / 🪞」）。
+> 如果要做给国内面试官看的演示站：`duijing.xyz` 未备案，**国内直连会在 TLS 的 SNI
+> 阶段被重置**（实测：钉住 IP 只改 SNI 就 `ECONNRESET`；换端口也绕不过，
+> 因为拦截看的是 SNI）。一位没有梯子的面试官打不开自建站，
+> 所以演示站建议放在境外平台。
 >
-> **真正跑在 HuggingFace Spaces 上的是青屿日记** —— 它的独立仓库里
-> `hf` 远端指向 `spaces/heihei-666/qingyu-diary`，并有专门提交
-> `40e8ed6 添加 HF Spaces Docker YAML 元数据`。
-> **对镜从来没有 Space，也没有 `hf` 远端。** 留着那段 frontmatter 只会误导人
-> （它已经误导过一次），所以删掉了。
->
-> 将来要建就建一个**新的** Space（例如 `heihei-666/dui-jing`），
-> 别去动青屿那个；frontmatter 加在那个新 Space 自己的仓库里。
-
-**为什么建议这么做**：`duijing.xyz` 未备案，国内直连会在 TLS 的 SNI 阶段被重置
-（实测：钉住 IP 只改 SNI 就 `ECONNRESET`；换端口也绕不过，因为拦截看的是 SNI）。
-**一位没有梯子的中国面试官打不开自建站。**
-
-在 Spaces 的 Settings 里加一个持久化：`DB_PATH=/data/duijing.db`
-（`/data` 是 Spaces 提供的持久卷，不设的话重启即丢数据）。
-另外把 `AI_PROVIDER` 设成 `mock`，别把真实 Key 烧在公开站点上。
-
-> **务必**再放一段录屏 + 几张截图。
+> 放公开演示站时**务必**：`AI_PROVIDER=mock`（别把真实 Key 烧掉）、
+> 数据目录挂持久卷（否则重启即丢数据）、并且**在 README 里放录屏 + 截图**——
 > 线上 demo 随时可能挂，截图和录屏才是不会失效的证明。
+
+---
+
+## 评测集：改了 prompt，怎么知道是变好了还是变坏了
+
+这是这个项目里最容易被忽略、但最能说明工程成熟度的一块。
+`tests/` 测的是**管道**（路由对不对、JSON 能不能抠出来），
+**没有一条在评估模型输出的质量**。`evals/` 补的就是这个。
+
+两层结构，因为两件事的成本和确定性完全不同：
+
+| 层 | 跑什么 | 花钱 | 在哪跑 | 证明什么 |
+|---|---|---|---|---|
+| **规则校验** | 观察上限、废话黑名单、长度、复盘块非空、是否落在对应层 | **免费**（Mock） | **CI 每次提交** | 管道没坏 |
+| **LLM-as-judge** | 具体性 / 有无依据 / 可执行性 / 是不是废话 / 是否错标 | 几毛钱 | 手动 | 观察准不准 |
+
+judge 默认用 **DeepSeek** 当裁判，而被测的观察提取走 MiMo（方案 5.3 的路由）——
+**换源是为了避免同一个模型给自己打分**，那样系统性偏袒无法被发现。
+
+### 实测：prompt 迭代三版
+
+同一套 30 条 golden set、同一个裁判：
+
+| 指标 | v1 | v2 | **v2.1** | 总变化 |
+|---|---|---|---|---|
+| 具体性（5 分制） | 3.26 | 3.86 | **4.22** | **+29%** |
+| 有依据（5 分制） | 3.51 | 3.88 | **4.42** | **+26%** |
+| 可执行性（5 分制） | 2.40 | 2.92 | **3.27** | **+36%** |
+| 判为废话 | 13 条 | 6 条 | **2 条** | **−85%** |
+| 判为错标 | 16 条 | 7 条 | **5 条** | **−69%** |
+| **跨用例重复的观察** | 3 类 | 2 类 | **0 类** | **套模板消失** |
+| 规则层通过率 | 100% | 96.7% | **100%** | |
+| 成本 / 轮 | 0.069 元 | 0.085 元 | 0.090 元 | +29.5% |
+
+**评分涨 26~36%，成本涨 29.5%**（prompt 402→1707 字符）——这笔账划不划算取决于产品，
+但**至少它是可算的**。
+
+### 三版之间发生了什么（这才是重点）
+
+- **v1 的问题**：复盘 prompt **通篇没提「观察四层」**（辩论 prompt 里有，这份没有）。
+  结果模型对几乎每场辩论都只回「回避追问」+「立场坚定」两个万能标签——
+  **它根本没在读内容。**
+- **v2 修了什么**：补四层定义；写清「什么不算观察」并给出一条自检
+  （换个持同样立场但表现完全不同的人，这个标签还成立吗）；
+  要求 `reason` 必须**原样引用用户说过的至少 4 个字**。
+- **v2 的代价，以及 v2.1 怎么修的**：v2 让三个质量分全涨了，
+  **但规则层通过率从 100% 掉到 96.7%**——复盘的「如果再来一次」那一栏变成**空白**。
+  v2 的严格性外溢到了叙事块。v2.1 把「没依据就给 null」限定在两条观察上，
+  三个叙事块反过来必须写。**回归修好，质量分继续涨。**
+
+> **这一节最该被看到的是 v2 那次代价**：只看 judge 的三个分数，
+> 会得出「v2 全面变好」——**那是错的**。那个空白栏只有规则层抓得到。
+> **确定性检查和质量评分互相看不见对方的盲区**，这就是两层设计存在的理由。
+
+### 用法
+
+```bash
+python -m evals.run --mode rules                                    # 免费，CI 跑这个
+REVIEW_PROMPT_VERSION=v1|v2|v2.1 python -m evals.run --mode judge    # 需要 Key
+python -m evals.judge --report evals/reports/rules-<时间戳>.json      # judge 单独重跑
+```
+
+详见 [`evals/README.md`](evals/README.md)。**当前 golden set 是合成数据**，
+不是生产脱敏数据——这一点如实写在文档里，不含糊。
 
 ---
 
@@ -331,8 +398,10 @@ AI 内容由规则生成但走的是同一条业务路径。
 
 | 项 | 状态 |
 |---|---|
-| CI | [`.github/workflows/ci.yml`](.github/workflows/ci.yml)：Ubuntu + **Windows** + 前端类型检查/构建 + 镜像构建 |
+| CI | [`.github/workflows/ci.yml`](.github/workflows/ci.yml)：**5 个作业** —— Ubuntu 后端测试 + **Windows 中文编码专项** + 前端类型检查/构建 + 镜像构建 + **评测集规则校验** |
 | 为什么有 Windows 作业 | 有两个真实缺陷只在非 UTF-8 的 Windows 上出现（见 `tests/test_portability.py`），只在 Linux 跑测试永远发现不了 |
+| 测试 | **279 项**，全程 Mock Provider，不联网不花钱 |
+| 评测 | 见上一节；规则层免费进 CI，judge 层手动跑 |
 | 许可 | [MIT](LICENSE) |
 | 密钥防线 | `.gitignore` + `.githooks/pre-commit` + `tests/test_secrets_hygiene.py`（三层） |
 | 观测 | `GET /api/admin/ai-stats`（管理员）：调用量、成本、缓存命中率、TTFT、解析失败率 |
