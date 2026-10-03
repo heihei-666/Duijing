@@ -1,12 +1,3 @@
----
-title: 对镜
-emoji: 🪞
-colorFrom: gray
-colorTo: blue
-sdk: docker
-pinned: false
----
-
 # 对镜
 
 > 用 AI 辩论房照见自己，用弱点回环改善自己。
@@ -308,18 +299,20 @@ AI 内容由规则生成但走的是同一条业务路径。
 
 配合根目录的 `Dockerfile` 可以部署。
 
-> ⚠️ **先说清楚一件事，免得被本文件顶部的 frontmatter 误导。**
-> 那段 `sdk: docker` 的 frontmatter **不是为对镜加的**，是**从青屿日记继承来的**：
-> 分界前那次「整体重写为对镜」时 README 被重写，但 frontmatter 原样留着了
+> ⚠️ **先说清楚一件事。**
+> 本文件顶部**曾经**有一段 `sdk: docker` 的 HuggingFace Spaces frontmatter，
+> 已于 2026-10-03 移除。它**不是为对镜加的**，是**从青屿日记继承来的**：
+> 分界前那次「整体重写为对镜」时 README 被重写，但那段原样留着
 > （title 当时还是「青屿日记 / 🌊」，到 `535374c` 才改成「对镜 / 🪞」）。
 >
 > **真正跑在 HuggingFace Spaces 上的是青屿日记** —— 它的独立仓库里
 > `hf` 远端指向 `spaces/heihei-666/qingyu-diary`，并有专门提交
 > `40e8ed6 添加 HF Spaces Docker YAML 元数据`。
-> **对镜从来没有 Space，也没有 `hf` 远端。**
+> **对镜从来没有 Space，也没有 `hf` 远端。** 留着那段 frontmatter 只会误导人
+> （它已经误导过一次），所以删掉了。
 >
-> 所以要建就建一个**新的** Space（例如 `heihei-666/dui-jing`），别去动青屿那个；
-> 两边的数据、依赖、域名都不一样。
+> 将来要建就建一个**新的** Space（例如 `heihei-666/dui-jing`），
+> 别去动青屿那个；frontmatter 加在那个新 Space 自己的仓库里。
 
 **为什么建议这么做**：`duijing.xyz` 未备案，国内直连会在 TLS 的 SNI 阶段被重置
 （实测：钉住 IP 只改 SNI 就 `ECONNRESET`；换端口也绕不过，因为拦截看的是 SNI）。

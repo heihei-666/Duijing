@@ -11,16 +11,19 @@
 #    **没有梯子的面试官打不开**；套一层境外托管（如 HuggingFace Spaces）最省事，
 #    而 Spaces 需要的就是这个 Dockerfile。
 #
-# 【一个需要说清的历史（别再被 README 顶部的 frontmatter 误导）】
-# README 顶部那段 `sdk: docker` 的 frontmatter **不是给对镜准备的**，
-# 它是从青屿日记继承来的：分界前那次「整体重写为对镜」(`81becfd`) 时
-# README 被重写，但 frontmatter 原样留着（当时 title 还是「青屿日记 / 🌊」，
-# 到 `535374c` 才改成「对镜 / 🪞」）。
-# **真正用 HuggingFace Spaces 的是青屿日记** —— 它的独立仓库里
-# `hf` 远端指向 `spaces/heihei-666/qingyu-diary`，也专门有一次提交
+# 【一个需要说清的历史】
+# 这个仓库的 README 顶部**曾经**有一段 `sdk: docker` 的 HuggingFace Spaces
+# frontmatter。那段**不是给对镜准备的**，是从青屿日记继承来的：
+# 分界前那次「整体重写为对镜」(`81becfd`) 时 README 被重写，但 frontmatter
+# 原样留着（title 当时还是「青屿日记 / 🌊」，到 `535374c` 才改成「对镜 / 🪞」）。
+# **真正用 HuggingFace Spaces 的是青屿日记** —— 它的独立仓库里 `hf` 远端指向
+# `spaces/heihei-666/qingyu-diary`，也专门有一次提交
 # `40e8ed6 添加 HF Spaces Docker YAML 元数据`。**对镜从来没有 Space，也没有 hf 远端。**
-# 所以：这段 frontmatter 对现在的对镜而言只是「如果将来要建 Space 的话正好用得上」，
-# 而不是「一个没兑现的声明」。要建就建一个**新的** Space，别去动青屿那个。
+#
+# 2026-10-03 已把那段 frontmatter 从 README 移除：它对对镜是死配置，
+# 而且真的误导过一次判断（见 docs 里的更正记录）。将来真要建 Space，
+# 建一个**新的**（例如 heihei-666/dui-jing），别去动青屿那个，
+# frontmatter 加在那个新 Space 自己的仓库里即可。
 
 # ─────────────────────────────────────────────────────────────
 # 阶段 1：构建前端
