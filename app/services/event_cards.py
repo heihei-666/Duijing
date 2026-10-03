@@ -98,6 +98,19 @@ async def suggest_loops(
 
 
 async def enqueue(session: AsyncSession, *, user_id: int, task_type: str, payload: dict) -> AIQueue:
+    """把一条 AI 任务放进延迟队列。
+
+    会校验任务类型：没有注册处理器的类型进了队也只能在夜里被判为
+    「未知任务类型」然后失败，不如在**入队那一刻**就报出来。
+    """
+    from app.services.ai_queue import KNOWN_TASKS
+
+    if task_type not in KNOWN_TASKS:
+        raise ValueError(
+            f"未注册的任务类型 {task_type!r}；"
+            f"新增类型时要在 app/services/ai_queue.py 的 HANDLERS 里注册"
+        )
+
     task = AIQueue(user_id=user_id, task_type=task_type, payload_json=payload or {})
     session.add(task)
     await session.flush()
@@ -301,13 +314,9 @@ async def run_weekly_scan(session: AsyncSession) -> dict:
         except Exception:  # noqa: BLE001
             logger.exception("周扫描失败 user=%s", user_id)
 
-    # 清掉队列里已处理的任务
-    queue_rows = await session.execute(
-        select(AIQueue).where(AIQueue.status == "pending")
-    )
-    for task in queue_rows.scalars().all():
-        task.status = "done"
-        task.processed_at = now_utc()
-
+    # ⚠️ 这里曾经有一段「把队列里所有 pending 无条件标成 done」的代码。
+    # 那是假队列的收尾动作：任务被标记为完成，但**从来没有被执行过**。
+    # 真正的消费者是 app/services/ai_queue.py，由调度器
+    # job_process_ai_queue 在每天 02:30 推进（方案 5.4：后台任务全部夜间执行）。
     await session.flush()
     return {"users": len(user_ids), "cards_analyzed": total_cards, "candidates": total_candidates}

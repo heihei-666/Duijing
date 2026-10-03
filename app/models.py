@@ -596,10 +596,23 @@ class AIQueue(Base):
     """AI 延迟任务队列。
 
     方案 5.4：事件卡不实时扫描，进队列，每周日 02:00 批量处理。
+
+    【这张表曾经是「假队列」】
+    任务能进队（`event_cards.enqueue`），但**没有消费者**：周扫描不看
+    `task_type`/`payload_json`，而是自己重新查一遍要处理什么，
+    然后把**所有** pending 行无条件标成 done。
+    `processing` / `failed` / `error` 三个字段从未被写过，行也永不清理 ——
+    所以真实执行是「定时任务全表扫」，队列只是一张流水账。
+
+    现在由 `app/services/ai_queue.py` 真正消费：认领 → 执行 → 成功/失败/重试。
     """
 
     __tablename__ = "ai_queue"
-    __table_args__ = (Index("ix_queue_status_created", "status", "created_at"),)
+    __table_args__ = (
+        Index("ix_queue_status_created", "status", "created_at"),
+        # 重试扫描按 (status, attempts) 走，和上面那条不是一回事
+        Index("ix_queue_status_attempts", "status", "attempts"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     user_id: Mapped[int] = mapped_column(
@@ -608,11 +621,18 @@ class AIQueue(Base):
 
     task_type: Mapped[str] = mapped_column(String(32), nullable=False)  # scan_event_cards|...
     payload_json: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    # pending | processing | done | failed
     status: Mapped[str] = mapped_column(
         String(16), default=QueueStatus.PENDING.value, nullable=False
     )
 
+    # 已尝试次数。达到上限后不再重试，置为 failed 并留下 error ——
+    # 一条永远失败的任务不该无限占着队列，也不该静默消失。
+    attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, nullable=False)
+    # 认领时刻。用来发现「进程在任务执行到一半时挂了」而卡在 processing 的行。
+    started_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
     processed_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
 

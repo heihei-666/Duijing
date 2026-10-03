@@ -17,6 +17,7 @@ from app.api.advantages import archive_stale
 from app.config import settings
 from app.db import session_scope
 from app.services import ai_metrics
+from app.services import ai_queue as ai_queue_service
 from app.services import event_cards as event_card_service
 from app.services import loops as loop_service
 from app.services import observations as observation_service
@@ -91,6 +92,20 @@ async def job_purge_weaknesses() -> None:
         logger.exception("弱点清理任务失败")
 
 
+async def job_process_ai_queue() -> None:
+    """每天 02:30：推进 AI 延迟队列（认领 → 执行 → 重试/失败）。
+
+    方案 5.4 要求「事件卡不实时扫描，进队列，每周日 02:00 批量处理」。
+    这里选**每天**夜里跑一次而不是只在周日：
+    队列空的时候它是一次极便宜的查询，而只在周日跑会让一条失败的任务
+    要等一周才重试第二次 —— 三次重试跨三周，`MAX_ATTEMPTS` 就失去意义了。
+    cadence 仍然完全落在「夜间批处理」的约束内。
+    """
+    stats = await ai_queue_service.process_pending_in_new_session()
+    if stats.get("claimed") or stats.get("recovered"):
+        logger.info("AI 队列推进：%s", stats)
+
+
 async def job_flush_ai_calls() -> None:
     """每分钟：把内存里的 AI 调用记录批量落库。
 
@@ -147,6 +162,14 @@ def start_scheduler() -> AsyncIOScheduler | None:
         misfire_grace_time=120,
     )
     scheduler.add_job(
+        job_process_ai_queue,
+        CronTrigger(hour=2, minute=30),
+        id="process_ai_queue",
+        replace_existing=True,
+        # 夜里机器忙/重启时允许补跑，但别拖到白天还去跑批
+        misfire_grace_time=3600,
+    )
+    scheduler.add_job(
         job_expire_observations,
         IntervalTrigger(hours=1),
         id="expire_observations",
@@ -172,7 +195,7 @@ def start_scheduler() -> AsyncIOScheduler | None:
     _scheduler = scheduler
     logger.info(
         "定时任务已启动：提醒派发=每分钟，AI 记录落库=每分钟，"
-        "周扫描=%s %02d:00，观察过期=每小时，清理=每日 03:00/03:30",
+        "AI 队列=每日 02:30，周扫描=%s %02d:00，观察过期=每小时，清理=每日 03:00/03:30",
         settings.SCAN_CRON_DAY,
         settings.SCAN_CRON_HOUR,
     )

@@ -22,6 +22,7 @@ from app.db import get_session
 from app.deps import require_admin
 from app.models import AICallLog, User
 from app.services import ai_metrics
+from app.services import ai_queue as ai_queue_service
 from app.utils import iso_utc, now_utc
 
 router = APIRouter(prefix="/api/admin", tags=["管理"])
@@ -177,6 +178,9 @@ async def ai_stats(
         "by_provider": by_provider,
         "by_task": by_task,
         "recent_calls": recent_calls,
+        # 延迟队列的健康度。没有这一段，「批处理积压了没有」只能靠人肉发现 ——
+        # oldest_pending_age_seconds 是积压最直接的信号。
+        "queue": await ai_queue_service.backlog(session),
         # 进程内计数（含尚未落库的缓冲），用于实时观察
         "live": ai_metrics.snapshot(),
         # 价格表随响应返回，保证成本数字可复核
