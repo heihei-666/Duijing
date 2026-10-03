@@ -17,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import get_session
 from app.deps import get_current_user
-from app.models import Principle, User, WeaknessLoop
+from app.models import Principle, User, WeaknessCard, WeaknessLoop
 from app.services.serializers import principle_out
 from app.utils import now_utc
 
@@ -46,11 +46,41 @@ async def _get_owned(session: AsyncSession, principle_id: int, user: User) -> Pr
 
 
 async def _linked_loops(session: AsyncSession, principle: Principle) -> list[WeaknessLoop]:
+    """取这条原则关联的回环。
+
+    **必须再过一次归属**：`linked_loop_ids` 是库里的裸 ID 列表，
+    只按 id 查的话，把别人的回环 ID 写进自己的原则就能读到它。
+    归属从原则自己身上取（原则已通过 `_get_owned` 校验），所以调用方不用改。
+    """
     ids = list(principle.linked_loop_ids or [])
     if not ids:
         return []
-    rows = await session.execute(select(WeaknessLoop).where(WeaknessLoop.id.in_(ids)))
+    rows = await session.execute(
+        select(WeaknessLoop)
+        .join(WeaknessCard, WeaknessCard.id == WeaknessLoop.weakness_id)
+        .where(WeaknessLoop.id.in_(ids), WeaknessCard.user_id == principle.user_id)
+    )
     return list(rows.scalars().all())
+
+
+async def _owned_loop_ids(session: AsyncSession, ids: list[int] | None, user_id: int) -> list[int]:
+    """写入前过滤：只保留确实属于该用户的回环 ID（保持顺序、去重）。"""
+    wanted = [int(i) for i in (ids or [])]
+    if not wanted:
+        return []
+    rows = await session.execute(
+        select(WeaknessLoop.id)
+        .join(WeaknessCard, WeaknessCard.id == WeaknessLoop.weakness_id)
+        .where(WeaknessLoop.id.in_(wanted), WeaknessCard.user_id == user_id)
+    )
+    owned = {row[0] for row in rows.all()}
+    seen: set[int] = set()
+    result: list[int] = []
+    for i in wanted:
+        if i in owned and i not in seen:
+            seen.add(i)
+            result.append(i)
+    return result
 
 
 @router.get("")
@@ -105,7 +135,7 @@ async def create_principle(
         source_type="manual",
         status="active",  # 手动新建的直接启用，不需要再确认一次
         confidence=confidence,
-        linked_loop_ids=list(payload.linked_loop_ids or []),
+        linked_loop_ids=await _owned_loop_ids(session, payload.linked_loop_ids, user.id),
     )
     session.add(principle)
     await session.commit()
@@ -133,8 +163,10 @@ async def update_principle(
         principle.pinned = payload.pinned
 
     if payload.linked_loop_ids is not None:
-        # 一条原则可关联多个回环
-        principle.linked_loop_ids = list(payload.linked_loop_ids)
+        # 一条原则可关联多个回环（只接受属于自己的那些）
+        principle.linked_loop_ids = await _owned_loop_ids(
+            session, payload.linked_loop_ids, user.id
+        )
 
     principle.updated_at = now_utc()
     await session.commit()

@@ -105,11 +105,15 @@ async def purge_expired(
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):
-    """手动清理超过 60 天的弱点。
+    """手动清理**自己的**、超过 60 天的弱点。
 
-    定时任务每天也会跑一次；这个接口给「我现在就想清干净」的场景。
+    定时任务每天也会跑一次（那次是全局的）；这个接口给「我现在就想清干净」的场景。
     注意：这是**物理删除**，不可恢复。
+
+    ⚠️ 这里必须传 `user_id=user.id`。此前没传，而服务函数也没这个参数，
+    等于**任何登录用户都能一个请求删掉全站所有过期弱点**（跨租户、不可恢复）。
+    加参数是为了把「定时任务的全局清理」和「用户的手动清理」分成两条路径。
     """
-    deleted = await loop_service.purge_expired_weaknesses(session)
+    deleted = await loop_service.purge_expired_weaknesses(session, user_id=user.id)
     await session.commit()
     return {"deleted": deleted}

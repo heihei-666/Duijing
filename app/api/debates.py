@@ -275,26 +275,44 @@ async def _resolve_source(
 ) -> tuple[int | None, int | None]:
     """把 source_type/source_id 归一成 (loop_id, weakness_id)。
 
-    前端从不同入口进来时给的东西不一样：从弱点详情页过来带 weakness_id，
-    从回环条目过来带 loop_id，从事件卡历史过来只有 source_type/source_id。
-    这里统一收口，后面就不用到处判断。
-    """
-    loop_id = payload.loop_id
-    weakness_id = payload.weakness_id
+    **这里的第一职责是归属校验，不是归一化。**
 
-    if payload.source_type == "weakness" and payload.source_id and not weakness_id:
+    `payload.weakness_id` 和 `payload.loop_id` 都是**直接来自请求体的裸整数**。
+    此前只对 `source_type="weakness"` 那条分支校验了归属，另外两个字段不校验，
+    于是：填上别人的 ID → 存进自己的房间 → 被 `load_context` 读进 AI 提示词
+    → 再以 `weakness_name` 返回给调用方。这是一条**跨用户读取弱点**的路径，
+    而方案第九章第 4 条写的是「弱点数据默认私密」。
+
+    归属不符时**静默丢弃**而不是报错：报错会变成一个「这个 ID 是否存在」的探针。
+    """
+    loop_id: int | None = None
+    weakness_id: int | None = None
+
+    # ① 显式 weakness_id —— 必须是自己的
+    if payload.weakness_id is not None:
+        card = await session.get(WeaknessCard, payload.weakness_id)
+        if card is not None and card.user_id == user.id:
+            weakness_id = card.id
+
+    # ② 显式 loop_id —— 先查回环，再顺着它的弱点确认归属
+    if payload.loop_id is not None:
+        loop = await session.get(WeaknessLoop, payload.loop_id)
+        if loop is not None:
+            owner_card = await session.get(WeaknessCard, loop.weakness_id)
+            if owner_card is not None and owner_card.user_id == user.id:
+                loop_id = loop.id
+                # 给了 loop_id 就顺带把它的弱点也带上，AI 才能看到完整回环上下文
+                if weakness_id is None:
+                    weakness_id = owner_card.id
+
+    # ③ 只有 source_type + source_id（弱点来源）
+    if weakness_id is None and payload.source_type == "weakness" and payload.source_id:
         card = await session.get(WeaknessCard, payload.source_id)
         if card is not None and card.user_id == user.id:
             weakness_id = card.id
-    elif payload.source_type == "event_card" and payload.source_id:
-        # 事件卡来源没有「关联回环」的概念，只有一条内容当场景
-        pass
 
-    # 给了 loop_id 就顺带把它的弱点也带上，AI 才能看到完整的回环上下文
-    if loop_id and not weakness_id:
-        loop = await session.get(WeaknessLoop, loop_id)
-        if loop is not None:
-            weakness_id = loop.weakness_id
+    # 事件卡来源没有「关联回环」的概念，只有一条内容当场景，
+    # 它的归属校验在 _scene_from_source 里做。
 
     return loop_id, weakness_id
 

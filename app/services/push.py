@@ -127,11 +127,31 @@ async def save_subscription(
 
     同一个 endpoint 重复订阅时**更新密钥**而不是新增：
     浏览器重新订阅会换掉 p256dh/auth，旧记录留着只会推送失败。
+
+    【为什么允许「换人」】
+    endpoint 属于**浏览器安装**，不属于账号。同一台电脑/同一个浏览器换人登录时，
+    浏览器给出的 endpoint 是同一个——所以这里允许把行划给新用户，
+    否则第二个用户在这台设备上永远开通不了通知（endpoint 上有唯一约束，也建不了第二条）。
+
+    【为什么这不是数据泄露】
+    `dispatch_due_reminders` 是按**提醒的拥有者**去查订阅的，
+    所以 endpoint 划给 B 之后，A 的提醒只会因为「A 没有设备」而被标记失败，
+    **不会**被投递到 B 的浏览器上。`tests/test_security_ownership.py` 里有回归用例锁住这条不变量。
+
+    代价：知道别人 endpoint 的人可以把它抢走，让原主收不到通知（骚扰级，非泄露）。
+    所以这里留一条 warning 日志，便于事后排查「通知突然没了」。
     """
     existing = await session.scalar(
         select(PushSubscription).where(PushSubscription.endpoint == endpoint)
     )
     if existing is not None:
+        if existing.user_id != user_id:
+            logger.warning(
+                "推送订阅 endpoint 换主：%s… 由 user=%s 划给 user=%s（同浏览器换账号登录）",
+                endpoint[:40],
+                existing.user_id,
+                user_id,
+            )
         existing.user_id = user_id
         existing.p256dh = p256dh
         existing.auth = auth

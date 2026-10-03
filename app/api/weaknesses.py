@@ -18,7 +18,7 @@ from app.ai.router import TASK_LOOP_DIALOG, complete
 from app.config import settings
 from app.db import get_session
 from app.deps import get_current_user
-from app.models import User, WeaknessCard, WeaknessLoop
+from app.models import Advantage, Principle, User, WeaknessCard, WeaknessLoop
 from app.services import debate as debate_service
 from app.services import loops as loop_service
 from app.services.loops import Stats
@@ -209,7 +209,9 @@ async def get_weakness(
     loop_payload = []
     for lp in loop_rows:
         lst = loop_stats_map.get(lp.id, Stats())
-        advantages, principles = await loop_service.load_linked_assets(session, lp)
+        advantages, principles = await loop_service.load_linked_assets(
+            session, lp, user_id=user.id
+        )
         loop_payload.append(
             loop_out(
                 lp,
@@ -339,13 +341,21 @@ async def create_loop(
         body_signal=payload.body_signal,
         action_plan=payload.action_plan,
         activate=payload.activate,
-        linked_advantage_ids=payload.linked_advantage_ids,
-        linked_principle_ids=payload.linked_principle_ids,
+        # 写路径也要过滤归属：用户提交的是裸 ID 列表，不过滤就能把自己的回环
+        # 指向别人的优势/原则（读路径同样过滤，两道都要）
+        linked_advantage_ids=await loop_service.filter_owned_ids(
+            session, Advantage, payload.linked_advantage_ids, user.id
+        ),
+        linked_principle_ids=await loop_service.filter_owned_ids(
+            session, Principle, payload.linked_principle_ids, user.id
+        ),
     )
     await session.commit()
     await session.refresh(loop)
 
-    advantages, principles = await loop_service.load_linked_assets(session, loop)
+    advantages, principles = await loop_service.load_linked_assets(
+        session, loop, user_id=user.id
+    )
     return {
         "loop": loop_out(loop, weakness=card, advantages=advantages, principles=principles)
     }
@@ -450,9 +460,13 @@ async def update_loop(
         if payload.status == "active" and card.status == "observing":
             card.status = "improving"
     if payload.linked_advantage_ids is not None:
-        loop.linked_advantage_ids = list(payload.linked_advantage_ids)
+        loop.linked_advantage_ids = await loop_service.filter_owned_ids(
+            session, Advantage, payload.linked_advantage_ids, user.id
+        )
     if payload.linked_principle_ids is not None:
-        loop.linked_principle_ids = list(payload.linked_principle_ids)
+        loop.linked_principle_ids = await loop_service.filter_owned_ids(
+            session, Principle, payload.linked_principle_ids, user.id
+        )
 
     loop.updated_at = now_utc()
     await session.commit()
@@ -460,7 +474,9 @@ async def update_loop(
 
     st = (await loop_service.loop_stats(session, [loop.id])).get(loop.id, Stats())
     tr = (await loop_service.loop_trends(session, [loop.id])).get(loop.id)
-    advantages, principles = await loop_service.load_linked_assets(session, loop)
+    advantages, principles = await loop_service.load_linked_assets(
+        session, loop, user_id=user.id
+    )
 
     return {
         "loop": loop_out(

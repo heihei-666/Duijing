@@ -351,15 +351,27 @@ async def restore_weakness(session: AsyncSession, card: WeaknessCard) -> None:
     await session.flush()
 
 
-async def purge_expired_weaknesses(session: AsyncSession) -> int:
-    """物理删除超过 60 天倒计时的弱点。由定时任务调用。"""
-    rows = await session.execute(
-        select(WeaknessCard).where(
-            WeaknessCard.status == "archived",
-            WeaknessCard.delete_after.is_not(None),
-            WeaknessCard.delete_after <= now_utc(),
-        )
+async def purge_expired_weaknesses(session: AsyncSession, *, user_id: int | None = None) -> int:
+    """物理删除超过 60 天倒计时的弱点。
+
+    **user_id 是安全边界，不是可选优化。**
+
+    - `user_id=None` → 全局清理，**只有定时任务可以这么调**（`scheduler.py`）。
+    - `user_id=<id>` → 只清这个用户的，给 `POST /api/archive/purge` 用。
+
+    这里曾经没有 user_id 参数，而手动接口又直接调了它 —— 结果是**任何登录用户
+    都能一个请求物理删掉全站所有过期弱点**（跨租户破坏，且不可恢复）。
+    加参数时请保留默认值 None，让定时任务那条路径不用改。
+    """
+    stmt = select(WeaknessCard).where(
+        WeaknessCard.status == "archived",
+        WeaknessCard.delete_after.is_not(None),
+        WeaknessCard.delete_after <= now_utc(),
     )
+    if user_id is not None:
+        stmt = stmt.where(WeaknessCard.user_id == user_id)
+
+    rows = await session.execute(stmt)
     cards = list(rows.scalars().all())
     for card in cards:
         await session.delete(card)
@@ -403,23 +415,61 @@ async def create_loop(
 
 
 async def load_linked_assets(
-    session: AsyncSession, loop: WeaknessLoop
+    session: AsyncSession, loop: WeaknessLoop, *, user_id: int
 ) -> tuple[list[Advantage], list[Principle]]:
-    """取回环预案里引用的优势与原则。"""
+    """取回环预案里引用的优势与原则。
+
+    `user_id` **必须传**，且必须来自当前登录用户：
+    `linked_advantage_ids` / `linked_principle_ids` 是存在库里的裸 ID 列表，
+    如果只按 id 查，别人把这些 ID 写进自己的回环就能读到你的资产。
+    """
     advantage_ids = list(loop.linked_advantage_ids or [])
     principle_ids = list(loop.linked_principle_ids or [])
 
     advantages: list[Advantage] = []
     if advantage_ids:
-        rows = await session.execute(select(Advantage).where(Advantage.id.in_(advantage_ids)))
+        rows = await session.execute(
+            select(Advantage).where(
+                Advantage.id.in_(advantage_ids), Advantage.user_id == user_id
+            )
+        )
         advantages = list(rows.scalars().all())
 
     principles: list[Principle] = []
     if principle_ids:
-        rows = await session.execute(select(Principle).where(Principle.id.in_(principle_ids)))
+        rows = await session.execute(
+            select(Principle).where(
+                Principle.id.in_(principle_ids), Principle.user_id == user_id
+            )
+        )
         principles = list(rows.scalars().all())
 
     return advantages, principles
+
+
+async def filter_owned_ids(
+    session: AsyncSession, model, ids: list[int] | None, user_id: int
+) -> list[int]:
+    """写入前的归属过滤：只保留确实属于该用户的 ID。
+
+    用在「用户提交 linked_*_ids」的写路径上。读路径同样要过滤
+    （见 `load_linked_assets`）—— 两道都要，因为历史数据里可能已经存了脏 ID。
+    """
+    wanted = [int(i) for i in (ids or [])]
+    if not wanted:
+        return []
+    rows = await session.execute(
+        select(model.id).where(model.id.in_(wanted), model.user_id == user_id)
+    )
+    owned = {row[0] for row in rows.all()}
+    # 保持调用方给的顺序，去掉重复
+    seen: set[int] = set()
+    result: list[int] = []
+    for i in wanted:
+        if i in owned and i not in seen:
+            seen.add(i)
+            result.append(i)
+    return result
 
 
 def suggest_downgrade_payload(stats: Stats) -> dict:
