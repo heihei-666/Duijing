@@ -203,6 +203,18 @@ class UserProfile(Base):
     # 事件卡自动扫描默认开启（每周日夜间）
     auto_scan_event_cards: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
+    # 方案 3.10：向好友分享今日进度。默认**关闭**（约束第 4 条：分享必须是用户主动动作）。
+    #
+    # ⚠️ 这个开关控制的**只有两项**：连续天数、今天是否练过。
+    # 它们都是**计数，不是内容**——连续天数说明「他在坚持」，
+    # 但说不出「他在跟什么问题较劲」。
+    #
+    # 加新字段到好友可见范围之前，先读方案 3.10 的「为什么用白名单而不是黑名单」：
+    # 可见范围是白名单，**新增字段默认对好友不可见**。
+    share_progress_with_friends: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False
+    )
+
     # 辩题来源 P3 的缓存：连续几天没主动出题时，AI 根据弱点库生成一个辩题推给用户。
     # 缓存一天，避免每次打开辩论页都调一次模型（那既慢又费钱）。
     suggested_topic: Mapped[str] = mapped_column(Text, default="", nullable=False)
@@ -790,6 +802,122 @@ class AICallLog(Base):
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, nullable=False)
 
 
+class FriendRequestStatus(str, enum.Enum):
+    PENDING = "pending"
+    ACCEPTED = "accepted"
+    REJECTED = "rejected"
+
+
+class FriendRequest(Base):
+    """好友申请（方案 3.10）。
+
+    【为什么「拒绝」是一个终态】
+    方案 3.10 写的是「拒绝后 A 不可再向 B 发申请，除非 B 主动解除」。
+    如果拒绝只是把行删掉，A 可以立刻再申请——**拒绝就形同虚设**，
+    而且没有任何东西会阻止无限骚扰。所以这里保留 rejected 行，
+    由它来回答「这两个人之间发生过什么」。
+
+    唯一约束建在 (from, to) 上：同一对用户同时只允许一条申请记录。
+    """
+
+    __tablename__ = "friend_request"
+    __table_args__ = (
+        UniqueConstraint("from_user_id", "to_user_id", name="uq_friend_request_pair"),
+        Index("ix_friend_request_to_status", "to_user_id", "status"),
+        Index("ix_friend_request_from_status", "from_user_id", "status"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    from_user_id: Mapped[int] = mapped_column(
+        ForeignKey("user.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    to_user_id: Mapped[int] = mapped_column(
+        ForeignKey("user.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    status: Mapped[str] = mapped_column(
+        String(16), default=FriendRequestStatus.PENDING.value, nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, nullable=False)
+    responded_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
+
+
+class Friendship(Base):
+    """好友关系（方案 3.10）。
+
+    【为什么要规范化成 user_low < user_high】
+    「A 和 B 是好友」是一条无向关系。如果按 (a, b) 直接存，
+    那么 `are_friends(A,B)` 要查两个方向，而且**迟早会写出一边、
+    漏掉另一边**，产生「A 看 B 是好友、B 看 A 不是」的脏数据。
+    这里强制 low < high + 唯一约束：一条关系只有一种存法，
+    「是不是好友」永远是一次等值查询。
+    """
+
+    __tablename__ = "friendship"
+    __table_args__ = (
+        UniqueConstraint("user_low_id", "user_high_id", name="uq_friendship_pair"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_low_id: Mapped[int] = mapped_column(
+        ForeignKey("user.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    user_high_id: Mapped[int] = mapped_column(
+        ForeignKey("user.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, nullable=False)
+
+    @staticmethod
+    def order(a: int, b: int) -> tuple[int, int]:
+        """把任意一对用户 id 归一成 (low, high)。
+
+        调用方一律走这个函数，不要自己写 `if a < b`——
+        散落各处的比较迟早会有一处写反，而写反的后果是
+        「加了两次好友、删不掉」这类很难查的脏数据。
+        """
+        return (a, b) if a < b else (b, a)
+
+
+class DebateInvitationStatus(str, enum.Enum):
+    PENDING = "pending"
+    ACCEPTED = "accepted"
+    DECLINED = "declined"
+
+
+class DebateInvitation(Base):
+    """辩论邀请（方案 3.10）。
+
+    【为什么不能直接把好友塞进辩论房】
+    方案 3.1 说辩论房「默认私密，无观众」。直接把好友加进
+    `debate_participant` 等于**未经同意就把人拉进一个私密空间**——
+    他能看到里面的对话，却从没答应过。所以邀请必须是一个待接受的状态。
+
+    邀请链接（`debate_room.invite_token`）保留不变，用于邀请
+    还没有加好友的人；两者并存，不是替代关系。
+    """
+
+    __tablename__ = "debate_invitation"
+    __table_args__ = (
+        UniqueConstraint("room_id", "invitee_id", name="uq_debate_invitation_room_invitee"),
+        Index("ix_debate_invitation_invitee_status", "invitee_id", "status"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    room_id: Mapped[int] = mapped_column(
+        ForeignKey("debate_room.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    inviter_id: Mapped[int] = mapped_column(
+        ForeignKey("user.id", ondelete="CASCADE"), nullable=False
+    )
+    invitee_id: Mapped[int] = mapped_column(
+        ForeignKey("user.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    status: Mapped[str] = mapped_column(
+        String(16), default=DebateInvitationStatus.PENDING.value, nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, nullable=False)
+    responded_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
+
+
 __all__ = [
     "utcnow",
     "AICallLog",
@@ -808,6 +936,8 @@ __all__ = [
     "DebateStatus",
     "DebateLevel",
     "QueueStatus",
+    "FriendRequestStatus",
+    "DebateInvitationStatus",
     "User",
     "UserProfile",
     "DailyState",
@@ -826,4 +956,7 @@ __all__ = [
     "ArchiveRecord",
     "PushSubscription",
     "DebateReminder",
+    "FriendRequest",
+    "Friendship",
+    "DebateInvitation",
 ]

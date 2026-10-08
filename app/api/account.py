@@ -63,6 +63,11 @@ class ProfilePayload(BaseModel):
     level: str | None = Field(None, max_length=16)
     notify_debate_reminder: bool | None = None
     auto_scan_event_cards: bool | None = None
+    # 方案 3.10：向好友分享今日进度（连续天数 + 今天是否练过）。
+    #
+    # ⚠️ 这个开关只控制**两项计数**，不控制任何内容。改它之前先读方案 3.10 ——
+    # 好友可见范围是白名单，新增字段默认不可见。
+    share_progress_with_friends: bool | None = None
 
 
 @router.get("/profile")
@@ -92,6 +97,9 @@ async def update_profile(
         profile.notify_debate_reminder = payload.notify_debate_reminder
     if payload.auto_scan_event_cards is not None:
         profile.auto_scan_event_cards = payload.auto_scan_event_cards
+    if payload.share_progress_with_friends is not None:
+        # 关闭立即生效：这个字段是每次查好友列表时现读的，没有任何缓存
+        profile.share_progress_with_friends = payload.share_progress_with_friends
 
     await session.commit()
     await session.refresh(profile)
@@ -103,6 +111,7 @@ def profile_out(profile: UserProfile) -> dict:
         "level": profile.level,
         "notify_debate_reminder": profile.notify_debate_reminder,
         "auto_scan_event_cards": profile.auto_scan_event_cards,
+        "share_progress_with_friends": profile.share_progress_with_friends,
         "updated_at": iso_utc(profile.updated_at),
     }
 
@@ -239,7 +248,8 @@ async def export_data(
             "deletion_requested_at": iso_utc(user.deletion_requested_at),
         },
         "profile": (
-            _row(profile, ("level", "notify_debate_reminder", "auto_scan_event_cards"))
+            _row(profile, ("level", "notify_debate_reminder", "auto_scan_event_cards",
+                           "share_progress_with_friends"))
             if profile
             else None
         ),

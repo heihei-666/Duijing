@@ -25,6 +25,7 @@ from app.api import (
     auth,
     debates,
     event_cards,
+    friends,
     observations,
     principles,
     push,
@@ -122,6 +123,7 @@ app.include_router(archive.router)
 app.include_router(push.router)
 app.include_router(account.router)
 app.include_router(admin.router)
+app.include_router(friends.router)
 
 
 @app.get("/api/health", tags=["系统"])
