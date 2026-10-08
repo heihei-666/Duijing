@@ -22,15 +22,19 @@ from app.db import get_session, session_scope
 from app.deps import ensure_profile, get_current_user
 from app.models import (
     AIObservation,
+    DebateInvitation,
+    DebateInvitationStatus,
     EventCard,
     DebateMessage,
     DebateParticipant,
     DebateReview,
     DebateRoom,
     DebateStatus,
+    Friendship,
     User,
     WeaknessCard,
     WeaknessLoop,
+    utcnow,
 )
 from app.services import debate as debate_service
 from app.services import metrics as metrics_service
@@ -41,7 +45,7 @@ from app.services.serializers import (
     message_out,
     review_out,
 )
-from app.utils import generate_token, now_utc, to_utc
+from app.utils import generate_token, iso_utc, now_utc, to_utc
 
 logger = logging.getLogger("duijing.api.debate")
 
@@ -361,6 +365,133 @@ async def _scene_from_source(
         return "".join(parts)
 
     return ""
+
+
+# ── 好友邀请（方案 3.10）────────────────────────────────────────
+#
+# ⚠️ 这一段必须声明在 `GET /{room_id}` **之前**。
+# FastAPI 按声明顺序匹配，`/{room_id}` 会把 "invitations" 当成一个
+# room_id 吃掉，于是 /api/debates/invitations 返回 422 而不是邀请列表。
+
+
+@router.get("/invitations")
+async def list_debate_invitations(
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """我收到的待处理辩论邀请。
+
+    只返回「够用来做决定」的信息：谁发的、什么辩题、房里有几个人。
+    **不返回房间内的对话**——还没接受就不该看到内容。
+    """
+    rows = await session.execute(
+        select(DebateInvitation, DebateRoom, User)
+        .join(DebateRoom, DebateRoom.id == DebateInvitation.room_id)
+        .join(User, User.id == DebateInvitation.inviter_id)
+        .where(
+            DebateInvitation.invitee_id == user.id,
+            DebateInvitation.status == DebateInvitationStatus.PENDING.value,
+        )
+        .order_by(DebateInvitation.created_at.desc())
+    )
+
+    items = []
+    for invite, room, inviter in rows.all():
+        items.append(
+            {
+                "id": invite.id,
+                "room_id": room.id,
+                "topic": room.topic,
+                "stance": room.stance,
+                "inviter": {
+                    "user_id": inviter.id,
+                    "username": inviter.username,
+                    "nickname": inviter.nickname or inviter.username,
+                },
+                "participant_count": await _participant_count(session, room.id),
+                "max_participants": settings.DEBATE_MAX_PARTICIPANTS,
+                "created_at": iso_utc(invite.created_at),
+            }
+        )
+    return {"invitations": items}
+
+
+async def _load_invitation(
+    session: AsyncSession, invite_id: int, user: User
+) -> DebateInvitation:
+    """归属校验放在查询条件里，不是查出来再比。
+
+    这个项目此前出过四条越权路径，全部是「先查出来、再 if 判断归属」——
+    那种写法只要有一处漏了 if 就是漏洞；写进 where 则不可能漏。
+    """
+    invite = await session.scalar(
+        select(DebateInvitation).where(
+            DebateInvitation.id == invite_id,
+            DebateInvitation.invitee_id == user.id,
+        )
+    )
+    if invite is None:
+        raise HTTPException(status_code=404, detail="邀请不存在")
+    if invite.status != DebateInvitationStatus.PENDING.value:
+        raise HTTPException(status_code=409, detail="这条邀请已经处理过了")
+    return invite
+
+
+@router.post("/invitations/{invite_id}/accept")
+async def accept_debate_invitation(
+    invite_id: int,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """接受邀请 → 加入辩论房。"""
+    invite = await _load_invitation(session, invite_id, user)
+
+    existing = await session.scalar(
+        select(DebateParticipant).where(
+            DebateParticipant.room_id == invite.room_id,
+            DebateParticipant.user_id == user.id,
+        )
+    )
+    if existing is None:
+        count = await _participant_count(session, invite.room_id)
+        if count >= settings.DEBATE_MAX_PARTICIPANTS:
+            # 邀请发出后房间可能已经满了（链接被用掉、别人先进），
+            # 这时要明确告诉用户，而不是默默把人加进去变成第 5 个人
+            raise HTTPException(
+                status_code=400,
+                detail=f"辩论房已满（最多 {settings.DEBATE_MAX_PARTICIPANTS} 人）",
+            )
+        session.add(
+            DebateParticipant(room_id=invite.room_id, user_id=user.id, role="invitee")
+        )
+
+    invite.status = DebateInvitationStatus.ACCEPTED.value
+    invite.responded_at = utcnow()
+    await session.commit()
+
+    room = await session.get(DebateRoom, invite.room_id)
+    return {
+        "room": debate_room_out(
+            room,
+            is_owner=(room.user_id == user.id),
+            participant_count=await _participant_count(session, room.id),
+        )
+    }
+
+
+@router.post("/invitations/{invite_id}/decline")
+async def decline_debate_invitation(
+    invite_id: int,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """拒绝邀请。与好友申请不同，**辩论邀请被拒不是终态** ——
+    换个辩题重新邀请是正常的，这里不存在骚扰问题（房本来就是你发起的）。"""
+    invite = await _load_invitation(session, invite_id, user)
+    invite.status = DebateInvitationStatus.DECLINED.value
+    invite.responded_at = utcnow()
+    await session.commit()
+    return {"ok": True}
 
 
 # ── 详情 ──────────────────────────────────────────────────────
@@ -814,14 +945,25 @@ async def resume_debate(
     return {"status": room.status}
 
 
+class DebateInvitePayload(BaseModel):
+    """邀请好友进辩论房（方案 3.10）。
+
+    可选：不带 friend_ids 时行为与从前完全一致（只生成链接）。
+    两种方式**并存**，不是替代关系 —— 链接用于邀请还没加好友的人。
+    """
+
+    friend_ids: list[int] = Field(default_factory=list)
+
+
 @router.post("/{room_id}/invite")
 async def invite_to_debate(
     room_id: int,
     request: Request,
+    payload: DebateInvitePayload | None = None,
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):
-    """生成邀请链接。最多 4 人（含发起人）。"""
+    """生成邀请链接，以及/或者向好友发出待接受的邀请。最多 4 人（含发起人）。"""
     room, is_owner, count = await load_room_for_user(session, room_id, user)
     if not is_owner:
         raise HTTPException(status_code=403, detail="只有发起人可以邀请")
@@ -832,9 +974,72 @@ async def invite_to_debate(
             detail=f"辩论房最多 {settings.DEBATE_MAX_PARTICIPANTS} 人",
         )
 
+    invited: list[dict] = []
+    skipped: list[dict] = []
+    friend_ids = list(dict.fromkeys((payload.friend_ids if payload else []) or []))
+
+    if friend_ids:
+        # 只允许邀请**真正的好友**。不校验的话这个参数就是一个
+        # 「按 user_id 给任意用户发邀请」的入口 —— 又是一条越权路径。
+        low_high = [Friendship.order(user.id, fid) for fid in friend_ids if fid != user.id]
+        rows = await session.execute(
+            select(Friendship.user_low_id, Friendship.user_high_id).where(
+                Friendship.user_low_id.in_([p[0] for p in low_high]),
+                Friendship.user_high_id.in_([p[1] for p in low_high]),
+            )
+        ) if low_high else None
+        friends = {(a, b) for a, b in rows.all()} if rows is not None else set()
+
+        # 已占用名额 = 已在房里的人 + 还没处理的邀请
+        pending = await session.scalar(
+            select(func.count())
+            .select_from(DebateInvitation)
+            .where(
+                DebateInvitation.room_id == room.id,
+                DebateInvitation.status == DebateInvitationStatus.PENDING.value,
+            )
+        )
+        slots = settings.DEBATE_MAX_PARTICIPANTS - count - int(pending or 0)
+
+        for friend_id in friend_ids:
+            if friend_id == user.id:
+                skipped.append({"user_id": friend_id, "reason": "self"})
+                continue
+            if Friendship.order(user.id, friend_id) not in friends:
+                # 不区分「不是好友」和「不存在」，避免这个接口被用来探测用户
+                skipped.append({"user_id": friend_id, "reason": "not_friend"})
+                continue
+
+            already = await session.scalar(
+                select(DebateInvitation).where(
+                    DebateInvitation.room_id == room.id,
+                    DebateInvitation.invitee_id == friend_id,
+                )
+            )
+            if already is not None:
+                # 拒绝过的可以再邀（辩论邀请被拒不是终态，方案 3.10）
+                if already.status == DebateInvitationStatus.DECLINED.value:
+                    already.status = DebateInvitationStatus.PENDING.value
+                    already.responded_at = None
+                    invited.append({"user_id": friend_id, "invitation_id": already.id})
+                else:
+                    skipped.append({"user_id": friend_id, "reason": "already_invited"})
+                continue
+
+            if slots <= len(invited):
+                skipped.append({"user_id": friend_id, "reason": "room_full"})
+                continue
+
+            invite = DebateInvitation(
+                room_id=room.id, inviter_id=user.id, invitee_id=friend_id
+            )
+            session.add(invite)
+            await session.flush()
+            invited.append({"user_id": friend_id, "invitation_id": invite.id})
+
     if not room.invite_token:
         room.invite_token = generate_token(24)
-        await session.commit()
+    await session.commit()
 
     base = str(request.base_url).rstrip("/")
     return {
@@ -845,6 +1050,9 @@ async def invite_to_debate(
         "link": f"{base}/debate/join/{room.invite_token}",
         "participant_count": count,
         "max_participants": settings.DEBATE_MAX_PARTICIPANTS,
+        # 邀请是**待接受**的，不是已加入 —— 响应里说清楚，别让前端误以为是拉人成功
+        "invited": invited,
+        "skipped": skipped,
     }
 
 

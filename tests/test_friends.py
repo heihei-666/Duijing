@@ -278,8 +278,9 @@ class TestRemoveFriend:
         b = register(client, unique_name("fb"))
         _befriend(client, a, b)
 
-        b_id = b.get("/api/friends").json()["friends"][0]["user_id"]
-        assert b.client.delete(f"/api/friends/{b_id}", headers=b._headers).status_code == 200
+        # 注意是「b 删除 a」——所以要从 **b 的**好友列表里取 a 的 id
+        a_id = _uid_named(b, a.username)
+        assert b.client.delete(f"/api/friends/{a_id}", headers=b._headers).status_code == 200
 
         assert a.get("/api/friends").json()["friends"] == []
         assert b.get("/api/friends").json()["friends"] == []
@@ -295,8 +296,9 @@ class TestRemoveFriend:
         b = register(client, unique_name("fb"))
         _befriend(client, a, b)
 
-        b_id = b.get("/api/friends").json()["friends"][0]["user_id"]
-        b.client.delete(f"/api/friends/{b_id}", headers=b._headers)
+        # 同上：b 删除 a
+        a_id = _uid_named(b, a.username)
+        b.client.delete(f"/api/friends/{a_id}", headers=b._headers)
 
         r = a.post("/api/friends/requests", json={"username": b.username})
         assert r.status_code == 201, f"删除后应能重新申请，实际 {r.status_code}: {r.text}"
@@ -338,7 +340,213 @@ class TestAuth:
             ("get", "/api/friends"),
             ("get", "/api/friends/requests"),
             ("get", "/api/friends/search?username=x"),
+            ("get", "/api/debates/invitations"),
         ],
     )
     def test_requires_login(self, client, method, url):
         assert getattr(client, method)(url).status_code == 401
+
+
+def _make_room(actor: Actor) -> int:
+    r = actor.post("/api/debates", json={"topic": "该不该当场反驳", "stance": "该"})
+    assert r.status_code == 201, r.text
+    return r.json()["room"]["id"]
+
+
+def _uid_named(actor: Actor, username: str) -> int:
+    """从 **actor 自己的好友列表**里取指定用户名的 user_id。
+
+    为什么要专门写这个函数：这里踩过一次坑 —— 写成
+    `b.get("/api/friends").json()["friends"][0]["user_id"]` 时，
+    取到的是 **b 的好友（也就是 a）** 的 id，于是后面的
+    「a 邀请 [a的id]」被后端正确地判定成「邀请自己」并静默跳过，
+    测试以 `invited == []` 失败，**看起来像后端坏了**。
+
+    取错人这类错误会伪装成被测代码的 bug，所以把它封成一个
+    会明确报错的函数，而不是散落的下标取值。
+    """
+    for friend in actor.get("/api/friends").json()["friends"]:
+        if friend["username"] == username:
+            return friend["user_id"]
+    raise AssertionError(f"{actor.username} 的好友里没有 {username}")
+
+
+class TestDebateInvitation:
+    """方案 3.10：**不能把人直接拉进辩论房**，必须对方接受。"""
+
+    def test_invite_friend_creates_pending_invitation(self, client, unique_name):
+        a = register(client, unique_name("da"))
+        b = register(client, unique_name("db"))
+        _befriend(client, a, b)
+        room = _make_room(a)
+
+        b_id = _uid_named(a, b.username)
+        r = a.post(f"/api/debates/{room}/invite", json={"friend_ids": [b_id]})
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert len(body["invited"]) == 1
+        assert body["invited"][0]["user_id"] == b_id
+        # 链接仍然给（两种方式并存）
+        assert body["link"]
+
+        # B 收到邀请，但**还没有**进房
+        inv = b.get("/api/debates/invitations").json()["invitations"]
+        assert len(inv) == 1
+        assert inv[0]["inviter"]["username"] == a.username
+        assert inv[0]["topic"] == "该不该当场反驳"
+        assert b.get(f"/api/debates/{room}").status_code == 403
+
+    def test_invitation_does_not_leak_conversation(self, client, unique_name):
+        """还没接受就不该看到房间内容 —— 邀请里只能有「够做决定」的信息。"""
+        a = register(client, unique_name("da"))
+        b = register(client, unique_name("db"))
+        _befriend(client, a, b)
+        room = _make_room(a)
+        b_id = _uid_named(a, b.username)
+        a.post(f"/api/debates/{room}/invite", json={"friend_ids": [b_id]})
+
+        inv = b.get("/api/debates/invitations").json()["invitations"][0]
+        assert set(inv) == {
+            "id", "room_id", "topic", "stance", "inviter",
+            "participant_count", "max_participants", "created_at",
+        }
+        assert "messages" not in inv and "first_message" not in inv
+
+    def test_accept_joins_room(self, client, unique_name):
+        a = register(client, unique_name("da"))
+        b = register(client, unique_name("db"))
+        _befriend(client, a, b)
+        room = _make_room(a)
+        b_id = _uid_named(a, b.username)
+        a.post(f"/api/debates/{room}/invite", json={"friend_ids": [b_id]})
+
+        inv_id = b.get("/api/debates/invitations").json()["invitations"][0]["id"]
+        r = b.post(f"/api/debates/invitations/{inv_id}/accept")
+        assert r.status_code == 200, r.text
+
+        # 现在能进房了
+        assert b.get(f"/api/debates/{room}").status_code == 200
+        # 邀请从待处理列表消失
+        assert b.get("/api/debates/invitations").json()["invitations"] == []
+
+    def test_decline_does_not_join_and_can_be_reinvited(self, client, unique_name):
+        """辩论邀请被拒**不是终态** —— 换个辩题再邀是正常的。
+
+        这与好友申请刻意不同：那里拒绝必须终态（防骚扰），
+        这里房间本来就是对方发起的，不存在骚扰问题。
+        """
+        a = register(client, unique_name("da"))
+        b = register(client, unique_name("db"))
+        _befriend(client, a, b)
+        room = _make_room(a)
+        b_id = _uid_named(a, b.username)
+        a.post(f"/api/debates/{room}/invite", json={"friend_ids": [b_id]})
+
+        inv_id = b.get("/api/debates/invitations").json()["invitations"][0]["id"]
+        assert b.post(f"/api/debates/invitations/{inv_id}/decline").status_code == 200
+        assert b.get(f"/api/debates/{room}").status_code == 403
+        assert b.get("/api/debates/invitations").json()["invitations"] == []
+
+        # 再邀一次：应重新变成 pending
+        r = a.post(f"/api/debates/{room}/invite", json={"friend_ids": [b_id]})
+        assert len(r.json()["invited"]) == 1
+        assert len(b.get("/api/debates/invitations").json()["invitations"]) == 1
+
+    def test_cannot_invite_non_friend(self, client, unique_name):
+        """不校验好友关系的话，friend_ids 就是一个「按 user_id 给任意人发邀请」的入口。"""
+        a = register(client, unique_name("da"))
+        stranger = register(client, unique_name("ds"))
+        room = _make_room(a)
+
+        sid = a.get(
+            "/api/friends/search", params={"username": stranger.username}
+        ).json()["user"]["user_id"]
+        r = a.post(f"/api/debates/{room}/invite", json={"friend_ids": [sid]})
+        assert r.status_code == 200
+        assert r.json()["invited"] == []
+        assert r.json()["skipped"][0]["reason"] == "not_friend"
+        assert stranger.get("/api/debates/invitations").json()["invitations"] == []
+
+    def test_cannot_invite_self(self, client, unique_name):
+        a = register(client, unique_name("da"))
+        room = _make_room(a)
+        me = a.get("/api/account/profile")
+        assert me.status_code == 200
+        r = a.post(f"/api/debates/{room}/invite", json={"friend_ids": [1]})
+        assert r.status_code == 200
+        assert r.json()["invited"] == []
+
+    def test_only_invitee_can_accept(self, client, unique_name):
+        """归属校验：别人拿着 invite_id 也接受不了。"""
+        a = register(client, unique_name("da"))
+        b = register(client, unique_name("db"))
+        c = register(client, unique_name("dc"))
+        _befriend(client, a, b)
+        room = _make_room(a)
+        b_id = _uid_named(a, b.username)
+        a.post(f"/api/debates/{room}/invite", json={"friend_ids": [b_id]})
+
+        inv_id = b.get("/api/debates/invitations").json()["invitations"][0]["id"]
+        assert c.post(f"/api/debates/invitations/{inv_id}/accept").status_code == 404
+        assert c.post(f"/api/debates/invitations/{inv_id}/decline").status_code == 404
+
+    def test_cannot_handle_invitation_twice(self, client, unique_name):
+        a = register(client, unique_name("da"))
+        b = register(client, unique_name("db"))
+        _befriend(client, a, b)
+        room = _make_room(a)
+        b_id = _uid_named(a, b.username)
+        a.post(f"/api/debates/{room}/invite", json={"friend_ids": [b_id]})
+
+        inv_id = b.get("/api/debates/invitations").json()["invitations"][0]["id"]
+        b.post(f"/api/debates/invitations/{inv_id}/accept")
+        assert b.post(f"/api/debates/invitations/{inv_id}/accept").status_code == 409
+
+    def test_only_owner_can_invite(self, client, unique_name):
+        a = register(client, unique_name("da"))
+        b = register(client, unique_name("db"))
+        c = register(client, unique_name("dc"))
+        _befriend(client, a, b)
+        room = _make_room(a)
+        b_id = _uid_named(a, b.username)
+        a.post(f"/api/debates/{room}/invite", json={"friend_ids": [b_id]})
+        inv_id = b.get("/api/debates/invitations").json()["invitations"][0]["id"]
+        b.post(f"/api/debates/invitations/{inv_id}/accept")
+
+        # B 已在房里，但不是发起人，不该能邀请
+        c_id = c.get("/api/friends/search", params={"username": a.username})
+        r = b.post(f"/api/debates/{room}/invite", json={"friend_ids": []})
+        assert r.status_code == 403
+
+    def test_plain_link_invite_still_works(self, client, unique_name):
+        """不带 friend_ids 时行为必须和从前完全一致（向后兼容）。"""
+        a = register(client, unique_name("da"))
+        room = _make_room(a)
+        r = a.post(f"/api/debates/{room}/invite", json={})
+        assert r.status_code == 200
+        assert r.json()["invite_token"]
+        assert r.json()["invited"] == []
+
+    def test_invite_without_body_still_works(self, client, unique_name):
+        """老客户端不带 body —— 不能因此 422。"""
+        a = register(client, unique_name("da"))
+        room = _make_room(a)
+        r = a.post(f"/api/debates/{room}/invite")
+        assert r.status_code == 200, f"不带 body 应仍可用，实际 {r.status_code}: {r.text}"
+
+    def test_capacity_caps_pending_invitations(self, client, unique_name):
+        """房满前只放得下这么多邀请 —— 不能给 4 人房发 10 份邀请。"""
+        a = register(client, unique_name("da"))
+        room = _make_room(a)
+        others = [register(client, unique_name(f"df{i}")) for i in range(4)]
+        for o in others:
+            _befriend(client, a, o)
+
+        friend_ids = [f["user_id"] for f in a.get("/api/friends").json()["friends"]]
+        assert len(friend_ids) == 4
+        r = a.post(f"/api/debates/{room}/invite", json={"friend_ids": friend_ids})
+        body = r.json()
+        # 4 人房，发起人占 1，剩下 3 个位置
+        assert len(body["invited"]) == 3, f"应只邀请 3 人，实际 {len(body['invited'])}: {body}"
+        assert any(s["reason"] == "room_full" for s in body["skipped"])
+
