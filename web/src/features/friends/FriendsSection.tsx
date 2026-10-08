@@ -294,8 +294,13 @@ export function FriendsSection() {
         </p>
         <div className="mt-2">
           {/* 刻意不做自绘的开关滑块：theme 的 backgroundColor 里没有品牌色
-              （只有 base/surface/elevated/inset 与 sticky-*/rate-*），
-              自绘会引到一个不存在的类名上。用已验证的 Button 变体表达开/关。 */}
+              （只有 base / surface / elevated / inset 与 sticky-* 系列），
+              自绘会引到一个不存在的类名上。用已验证的 Button 变体表达开/关。
+
+              ⚠️ 这条注释原本写的是 sticky-* 紧跟斜杠 rate-* —— 中间那个
+              「星号+斜杠」把 JSX 注释提前闭合了，后面的中文变成 JSX 文本，
+              tsc 报 Invalid character / Expression expected。
+              在 JSX 注释里不能让星号紧跟着斜杠。 */}
           <Button
             variant={sharing ? 'outline' : 'ghost'}
             loading={busy === 'share'}
