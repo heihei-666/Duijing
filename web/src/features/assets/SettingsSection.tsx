@@ -4,6 +4,7 @@ import { apiRequest, authApi } from '@/api/client';
 import type { InviteInfo } from '@/api/types';
 import { Button } from '@/components/common/Button';
 import { NotificationSettings } from '@/features/push/NotificationSettings';
+import { FriendsSection } from '@/features/friends/FriendsSection';
 import { CheckIcon, CopyIcon } from '@/features/weakness/icons';
 import { copyText } from '@/features/assets/clipboard';
 import { formatTimestamp } from '@/lib/date';
@@ -146,6 +147,9 @@ export function SettingsSection() {
         {error && invite !== null ? <p className="mt-2 text-xs text-danger">{error}</p> : null}
         {notice ? <p className="mt-2 text-xs text-tertiary">{notice}</p> : null}
       </section>
+
+      {/* 好友（方案 3.10）：只做「能被你拉进辩论房的人」，看不到任何弱点数据 */}
+      <FriendsSection />
 
       {/* 通知：默认不推送，唯一例外是用户自己约的辩论提醒 */}
       <NotificationSettings />
