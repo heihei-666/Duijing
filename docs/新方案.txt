@@ -688,6 +688,44 @@ PATCH  /api/account/profile                新增 share_progress_with_friends（
 POST   /api/debates/:id/invite             新增可选 friend_ids，为每位好友生成待接受邀请
 ```
 
+6.10 密码
+
+```text
+PATCH  /api/account/password               改自己的密码（必须验当前密码）
+GET    /api/admin/users                    用户列表（管理员，绝不返回 password_hash）
+POST   /api/admin/users/:id/reset-password 重置他人密码，返回一次性临时密码（管理员）
+```
+
+【为什么需要这两条】
+
+这个项目**没有邮件、没有短信、用户表里也没有邮箱字段** ——
+用户忘了密码就没人能帮，之前只能由开发者手工改库。那不是功能，是运维事故的日常。
+
+两条路的分工：
+
+· **自己改**（`PATCH /api/account/password`）—— **必须验当前密码**。
+  只看「已登录」不够：一台忘记登出的设备被人拿到，就能直接改密码把账号锁死。
+
+· **管理员重置**（`/api/admin/users/:id/reset-password`）—— 不验旧密码，
+  因为**管理员本来就看不到别人的密码**（库里只有 bcrypt 哈希），
+  「重置」是唯一可行的语义。所以它必须放在 `/api/admin/*` 下受 `require_admin` 保护。
+
+【两条硬要求】
+
+1. **`/api/admin/users` 绝不返回 `password_hash`** —— 即使调用者是管理员。
+   字段用**白名单显式列出**，不是 `user.__dict__`，
+   这样将来给 user 表加列也不会顺手泄漏出去。
+2. **临时密码不含易混字符**（0/O、1/l/I）—— 它大概率要靠人念或手输。
+
+【已知限制，如实写在返回里】
+
+改密码 / 重置密码**都不会让其他设备已签发的 JWT 立即失效**。
+本项目用无状态 JWT + httpOnly cookie，没有 token 黑名单，旧 token 在 7 天有效期内仍可用。
+
+要做「改密码 = 其他设备登出」，需要在 `user` 上加一列 `password_changed_at`，
+并在 `get_current_user` 里比对 JWT 的 `iat`。**那是独立的一次改动**，
+不顺手混进来。
+
 **好友列表接口的返回必须遵守 3.10 的白名单**：只返回 `streak_days` 和
 `practiced_today` 两个字段，且仅在对方开启分享时返回；
 未开启时返回 `sharing: false`，**不返回任何过期数据**。

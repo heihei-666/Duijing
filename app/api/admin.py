@@ -12,9 +12,11 @@
 
 from __future__ import annotations
 
+import secrets
+import string
 from datetime import timedelta
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -26,6 +28,97 @@ from app.services import ai_queue as ai_queue_service
 from app.utils import iso_utc, now_utc
 
 router = APIRouter(prefix="/api/admin", tags=["管理"])
+
+
+# ── 用户管理 ──────────────────────────────────────────────────
+#
+# 为什么需要它：这个项目**没有邮件也没有短信**，用户忘了密码就没人能帮。
+# 之前只能由开发者手工改库 —— 那不是功能，是运维事故的日常。
+# 这两个接口把它变成管理员点一下就能做的事。
+
+
+@router.get("/users")
+async def list_users(
+    admin: User = Depends(require_admin),
+    session: AsyncSession = Depends(get_session),
+):
+    """用户列表。
+
+    ⚠️ **绝不返回 `password_hash`**。即使它是 bcrypt 哈希、即使调用者是管理员 ——
+    没有任何理由让哈希离开数据库。字段是**白名单式显式列出**的，
+    不是 `user.__dict__`，这样将来给 User 加列也不会顺手泄漏出去。
+    """
+    users = (await session.scalars(select(User).order_by(User.id))).all()
+    return {
+        "users": [
+            {
+                "id": u.id,
+                "username": u.username,
+                "nickname": u.nickname or u.username,
+                "is_admin": u.is_admin,
+                "created_at": iso_utc(u.created_at),
+                # 注销申请：管理员要能看到谁申请了注销，好去人工确认
+                "deletion_requested_at": iso_utc(u.deletion_requested_at),
+            }
+            for u in users
+        ]
+    }
+
+
+def _temp_password() -> str:
+    """生成一次性临时密码。
+
+    刻意用 `secrets` 而不是 `random`：`random` 是可预测的伪随机，
+    而这是要交给用户实际使用的凭据。
+
+    也刻意**不含易混字符**（0/O、1/l/I）—— 这个密码大概率要靠人念或者手输。
+    """
+    alphabet = "abcdefghjkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+    body = "".join(secrets.choice(alphabet) for _ in range(10))
+    return f"Dj-{body}"
+
+
+@router.post("/users/{user_id}/reset-password")
+async def reset_user_password(
+    user_id: int,
+    admin: User = Depends(require_admin),
+    session: AsyncSession = Depends(get_session),
+):
+    """为**别人**重置密码，返回一次性临时密码。
+
+    【为什么不校验旧密码】
+    管理员本来就看不到别人的密码（数据库里只有 bcrypt 哈希），
+    所以「重置」是唯一可行的语义。这也是为什么它是 `/api/admin/*` 下的接口，
+    受 `require_admin` 保护 —— 普通用户改自己的密码走
+    `PATCH /api/account/password`，那条**必须验当前密码**。
+
+    【为什么允许重置自己】
+    管理员忘记自己的密码时，这是唯一的自助出路（没有邮件通道）。
+    调用者已经通过 `require_admin` 鉴权，允许它不额外增加风险。
+    但响应里会明确标注这是自己的账号，前端也好给出提示。
+    """
+    from app.security import hash_password
+
+    target = await session.get(User, user_id)
+    if target is None:
+        raise HTTPException(status_code=404, detail="用户不存在")
+
+    temp = _temp_password()
+    target.password_hash = hash_password(temp)
+    await session.commit()
+
+    return {
+        "user_id": target.id,
+        "username": target.username,
+        "temp_password": temp,
+        "is_self": target.id == admin.id,
+        # 如实说明限制，别让用户以为「重置了就安全了」
+        "note": (
+            "这是临时密码，请转交本人并让其尽快在「设置 → 修改密码」里改掉。"
+            "注意：重置密码不会让该用户其他设备上已登录的会话立即失效"
+            "（无状态 JWT，7 天后自然过期）。"
+        ),
+    }
 
 
 @router.get("/ai-stats")
