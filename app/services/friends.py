@@ -325,16 +325,87 @@ async def list_friends(session: AsyncSession, me: User) -> list[dict]:
     return items
 
 
+async def invite_suggestions(session: AsyncSession, me: User) -> list[dict]:
+    """用我的邀请码注册、但还不是好友的人（方案 3.10「邀请关系」）。
+
+    【为什么是「建议」而不是「自动成为好友」】
+
+    邀请码是**一个**码，不是一对一的凭证 —— 谁拿到链接都能注册。
+    如果「用了我的码」就自动成为好友，那转发过一次群就等于群里所有人都
+    成了好友；而好友意味着能把你拉进辩论房、能看到你的连续天数。
+    「注册」和「我同意你进我的私密空间」是强度完全不同的两件事。
+
+    另外：自动加好友会**覆盖明确的拒绝** —— 有人申请过你、被你拒了，
+    但他恰好是用你的码注册的，那个拒绝就失效了。这与「拒绝是终态」
+    的防骚扰设计直接冲突。
+
+    所以这里只把**已经存在的关系浮出来**，点击后仍走正常申请流程。
+
+    四个排除条件缺一不可：
+      · 已是我好友
+      · 我和他之间有待处理的申请（有 pending 就不重复引导）
+      · 我拒绝过他，或他拒绝过我（拒绝是终态）
+    """
+    invited = (
+        await session.scalars(select(User).where(User.invited_by == me.id))
+    ).all()
+    if not invited:
+        return []
+
+    ids = [u.id for u in invited]
+    friend_ids = set(await _friend_ids(session, me.id))
+
+    # 与我有过交集（pending 或 rejected）的人。
+    # 一次查两个状态，避免 N 次单查。
+    rows = await session.execute(
+        select(
+            FriendRequest.from_user_id,
+            FriendRequest.to_user_id,
+            FriendRequest.status,
+        ).where(
+            or_(
+                and_(
+                    FriendRequest.from_user_id == me.id,
+                    FriendRequest.to_user_id.in_(ids),
+                ),
+                and_(
+                    FriendRequest.to_user_id == me.id,
+                    FriendRequest.from_user_id.in_(ids),
+                ),
+            )
+        )
+    )
+    blocked: set[int] = set()
+    for from_id, to_id, status in rows.all():
+        if status in (
+            FriendRequestStatus.PENDING.value,
+            FriendRequestStatus.REJECTED.value,
+        ):
+            blocked.add(to_id if from_id == me.id else from_id)
+
+    out = [
+        {
+            "user_id": user.id,
+            "username": user.username,
+            "nickname": user.nickname or user.username,
+        }
+        for user in invited
+        if user.id not in friend_ids and user.id not in blocked
+    ]
+    out.sort(key=lambda item: item["nickname"])
+    return out
+
+
 __all__ = [
     "FriendError",
     "FriendProgress",
     "are_friends",
     "find_user_by_username",
     "friend_progress",
+    "invite_suggestions",
     "list_friends",
     "list_requests",
     "remove_friend",
     "respond",
     "send_request",
-    "DebateInvitationStatus",
 ]

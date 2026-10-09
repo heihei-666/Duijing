@@ -94,6 +94,19 @@ async def search_user(
     }
 
 
+@router.get("/suggestions")
+async def list_suggestions(
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """用我的邀请码注册、但还不是好友的人（方案 3.10「邀请关系」）。
+
+    只是**建议** —— 前端点「加好友」后仍走 `POST /friends/requests`，
+    对方接受才成为好友。理由写在方案 3.10 与服务层 `invite_suggestions` 的注释里。
+    """
+    return {"suggestions": await friend_service.invite_suggestions(session, user)}
+
+
 @router.get("/requests")
 async def list_requests(
     user: User = Depends(get_current_user),
