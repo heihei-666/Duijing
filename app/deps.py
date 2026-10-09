@@ -43,7 +43,10 @@ def set_auth_cookie(response: Response, token: str) -> None:
         value=token,
         max_age=settings.JWT_EXPIRE_DAYS * 24 * 3600,
         httponly=True,
-        samesite="lax",
+        # 可配：微信内置浏览器需要 "none"（见 config.COOKIE_SAMESITE 的注释）。
+        # 设置与清除**必须用同一个值**，否则某些浏览器会因为属性不一致
+        # 而拒绝覆盖/删除旧 cookie。
+        samesite=settings.COOKIE_SAMESITE,
         secure=settings.COOKIE_SECURE,
         domain=settings.COOKIE_DOMAIN,
         path="/",
@@ -56,7 +59,7 @@ def clear_auth_cookie(response: Response) -> None:
         domain=settings.COOKIE_DOMAIN,
         path="/",
         httponly=True,
-        samesite="lax",
+        samesite=settings.COOKIE_SAMESITE,
         secure=settings.COOKIE_SECURE,
     )
 

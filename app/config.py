@@ -79,6 +79,18 @@ class Settings:
     COOKIE_SECURE: bool = _bool("COOKIE_SECURE", False)
     COOKIE_DOMAIN: str | None = os.getenv("COOKIE_DOMAIN") or None
 
+    # Cookie 的 SameSite 策略。默认 lax；**微信内置浏览器需要 none**。
+    #
+    # 为什么要做成可配：2026-10-09 实测，微信 PC 版内置浏览器（XWEB）里
+    # 登录接口返回 200 且下发了 Set-Cookie，但紧接着的 /api/auth/status-bar
+    # 就是 401 —— 会话 cookie 在该浏览器里没被带上。
+    # 微信把从聊天窗口打开的页面当作**跨站上下文**，而 SameSite=Lax 的 cookie
+    # 不会在跨站请求里发送。改成 none 后它才会被带上。
+    #
+    # ⚠️ none 要求 Secure（生产已是 true），且比 lax 的 CSRF 防护弱一档。
+    # 所以默认值保持 lax，只在确实需要的部署里通过环境变量打开。
+    COOKIE_SAMESITE: str = os.getenv("COOKIE_SAMESITE", "lax").strip().lower()
+
     # ── 注册 ──────────────────────────────────────────────
     # 为空表示不启用固定邀请码，仅用库内邀请码
     BOOTSTRAP_INVITE_CODE: str = os.getenv("BOOTSTRAP_INVITE_CODE", "").strip().upper()
