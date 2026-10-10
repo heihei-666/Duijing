@@ -41,6 +41,8 @@ AI 全程记录你的论证结构、情绪与防御、互动策略、语言习�
 | **原则库** | 撑住率达标生成候选；可关联多回环；忽略留痕 |
 | **状态栏** | 首页四块：日期+精力+连续天数 / 今天练什么 / AI 昨天观察到 / 两个入口 |
 | **垃圾桶** | 弱点 60 天倒计时；优势/原则可恢复；观察候选不恢复 |
+| **好友** | 精确查找加好友（不做模糊搜索——那等于开放「浏览全站用户」）；可从好友直接发起辩论邀请，**对方接受才进房间** |
+| **账号安全** | 改自己的密码（必须验当前密码）；管理员可重置他人密码（返回一次性临时密码）；数据导出与注销申请 |
 
 ## 快速开始
 
@@ -82,18 +84,19 @@ cd web && npm install && npm run dev    # :5173，/api 已代理到 3000
 **前端** React 18 + Vite + TypeScript + Tailwind CSS + Zustand + PWA + SSE
 **后端** Python 3.12 + FastAPI + SQLAlchemy 2.0 (async) + SQLite(WAL) + APScheduler
 **AI** DeepSeek（辩论，深度推理）+ MiMo（复盘/辩题/扫描，结构化短输出），可插拔
-**部署** 阿里云 2C2G + Nginx + systemd，Docker 镜像已通过 CI 构建验证
+**部署** 阿里云 2C2G + Nginx + systemd + **Cloudflare Tunnel**（未备案域名，见下），Docker 镜像已通过 CI 构建验证
 
 ## 文档
 
 | 文档 | 内容 |
 |---|---|
 | [CONTRIBUTING.md](CONTRIBUTING.md) | 开发环境、测试、**10 条不可协商的开发约束**、哪些文件不能凭直觉改 |
-| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 核心闭环、目录结构、数据库（19 张表）、规模取舍 |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 核心闭环、目录结构、数据库（22 张表）、规模取舍 |
 | [docs/CONFIG.md](docs/CONFIG.md) | AI Provider 配置、**失败不降级的设计理由**、成本控制 |
 | [docs/SECURITY.md](docs/SECURITY.md) | 密钥三层防护、泄露应急 |
 | [docs/API.md](docs/API.md) | 前后端契约（改字段先改这里） |
 | [deploy/DEPLOY.md](deploy/DEPLOY.md) | 完整部署手册 |
+| [deploy/CLOUDFLARE-TUNNEL.md](deploy/CLOUDFLARE-TUNNEL.md) | 未备案域名如何让国内用户能访问：隧道原理、实测结论、六个容易卡住的坑 |
 
 ## 部署
 
@@ -107,10 +110,28 @@ docker run -p 3000:7860 -e PORT=7860 -e AI_PROVIDER=mock duijing
 **上线前必做**：开 2G Swap、设 `COOKIE_SECURE=true`、`CORS_ORIGINS` 填真实域名、
 `JWT_SECRET` 用随机值。
 
-> `duijing.xyz` 未备案，**国内直连会在 TLS 的 SNI 阶段被重置**
-> （实测：钉住 IP 只改 SNI 就 `ECONNRESET`；换端口也绕不过，因为拦截看的是 SNI）。
-> 要做给国内看的演示站就得放境外平台，并且**务必**
-> `AI_PROVIDER=mock`（别把真实额度烧在公开站点上）+ 挂持久卷 + 放录屏截图。
+### 未备案域名怎么让国内用户访问
+
+`duijing.xyz` 未完成 ICP 备案，服务器在大陆（阿里云）——
+**阿里云会在 TLS 的 SNI 阶段重置入站连接**：
+
+```text
+HTTP  :80                                   ❌ ECONNRESET
+HTTPS :443 + SNI=www.duijing.xyz            ❌ ECONNRESET
+HTTPS :443 不带 SNI（直接连 IP）              ✅ 握手成功
+```
+
+**带 SNI 就断、不带就通** —— 这是基于 SNI 的定向阻断，不是服务器故障。
+
+解法是 **Cloudflare Tunnel**：源站**主动出站**连 Cloudflare，入站侧没有 SNI 可拦。
+注意**把 DNS 改成 Cloudflare 代理（橙云）并不能解决** ——
+被拦的是「Cloudflare → 源站」那段入站连接，它仍然带着域名 SNI。
+完整的原理、实测结论和六个容易卡住的坑见
+[deploy/CLOUDFLARE-TUNNEL.md](deploy/CLOUDFLARE-TUNNEL.md)。
+
+> **代价要说清楚**：隧道边缘落在洛杉矶（anycast 决定，客户端指定不了），
+> 一次请求约 900ms。**这是应急方案，不是长期架构** ——
+> 真正的解法是让源站离用户更近（如搬香港，境外服务器不需要备案）。
 
 ## 评测集
 
@@ -147,8 +168,9 @@ python -m evals.run --mode judge      # 需要 Key
 
 | 项 | 状态 |
 |---|---|
-| CI | **5 个作业**：Ubuntu 后端测试 + **Windows 中文编码专项** + 前端类型检查/构建 + 镜像构建 + **评测集规则校验** |
-| 测试 | **279 项**，全程 Mock，不联网不花钱 |
+| CI | **5 个作业**：Ubuntu 后端测试 + **Windows 中文编码专项** + 前端类型检查/构建 + 镜像构建 + **评测集规则校验**；前端构建产物上传为 artifact |
+| 测试 | **342 项**，全程 Mock，不联网不花钱 |
+| 前端 | 窄屏底部标签栏 / 宽屏左侧导航；弹层窄屏从底部升起、宽屏居中；设置页按角色分组 |
 | 密钥防线 | `.gitignore` + `.githooks/pre-commit` + `tests/test_secrets_hygiene.py`（三层） |
 | 可观测性 | 每次模型调用的 token / 缓存命中 / 成本 / 延迟落 `ai_call_log`；`GET /api/admin/ai-stats` |
 | 任务队列 | 认领 / 执行 / 重试 / 回收，积压可见（不是「假队列」） |
