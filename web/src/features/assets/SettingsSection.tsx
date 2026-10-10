@@ -5,6 +5,7 @@ import type { InviteInfo } from '@/api/types';
 import { Button } from '@/components/common/Button';
 import { NotificationSettings } from '@/features/push/NotificationSettings';
 import { FriendsSection } from '@/features/friends/FriendsSection';
+import { PasswordSection } from '@/features/assets/PasswordSection';
 import { CheckIcon, CopyIcon } from '@/features/weakness/icons';
 import { copyText } from '@/features/assets/clipboard';
 import { formatTimestamp } from '@/lib/date';
@@ -147,6 +148,10 @@ export function SettingsSection() {
         {error && invite !== null ? <p className="mt-2 text-xs text-danger">{error}</p> : null}
         {notice ? <p className="mt-2 text-xs text-tertiary">{notice}</p> : null}
       </section>
+
+      {/* 修改密码（方案 6.10）：在此之前项目根本没有这个入口，
+          忘了密码只能由开发者手工改库 */}
+      <PasswordSection />
 
       {/* 好友（方案 3.10）：只做「能被你拉进辩论房的人」，看不到任何弱点数据 */}
       <FriendsSection />
