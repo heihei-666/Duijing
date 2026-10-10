@@ -98,6 +98,24 @@ jobs:
       - name: 构建
         run: npm run build
 
+      # 上传构建产物，供**无法本地构建**的环境部署。
+      #
+      # 为什么需要：开发机在受限沙箱里跑不了 vite build（esbuild 要 spawn 子进程，
+      # 报 `spawn EPERM`）。没有这一步，每次前端上线都必须由人手在本地构建再上传 ——
+      # 既慢又容易漏（构建的 commit 和部署的 commit 对不上时没人会发现）。
+      #
+      # 有了它：CI 是唯一构建者，谁都能从 Actions 页面下载同一份产物部署。
+      #
+      # `if-no-files-found: error` 是刻意的：产物缺失时必须让这一步失败。
+      # 否则会出现「构建明明成功了但产物是空的」，而部署端要到线上才发现。
+      - name: 上传构建产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-dist
+          path: web/dist
+          retention-days: 14
+          if-no-files-found: error
+
   docker:
     name: 镜像可构建
     runs-on: ubuntu-latest
