@@ -132,6 +132,8 @@ export default {
       boxShadow: {
         card: '0 1px 2px 0 rgba(44, 42, 38, 0.04)',
         sheet: '0 -8px 24px rgba(44, 42, 38, 0.10)',
+        // 居中弹窗用。sheet 是**向上**投影的，用在居中弹窗上方向就反了。
+        modal: '0 8px 32px rgba(44, 42, 38, 0.16)',
       },
       keyframes: {
         'fade-in': {
