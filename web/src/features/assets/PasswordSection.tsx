@@ -3,6 +3,7 @@ import { useState } from 'react';
 import { apiRequest } from '@/api/client';
 import { Button } from '@/components/common/Button';
 import { Sheet } from '@/components/common/Sheet';
+import { SettingsRow } from '@/features/assets/SettingsGroup';
 
 /**
  * 修改密码（方案 6.10）。
@@ -81,24 +82,18 @@ export function PasswordSection() {
   };
 
   return (
-    <section className="rounded-xl bg-surface px-4 py-4">
-      <h3 className="text-[13px] text-secondary">账号安全</h3>
-
-      <div className="mt-4 border-t border-light pt-3">
-        <p className="text-[13px] text-secondary">修改密码</p>
-        <p className="mt-1 text-xs leading-relaxed text-tertiary">
-          需要先验证当前密码。改完之后，其他设备上已登录的会话不会立即失效，
-          会在 7 天后自然过期。
-        </p>
-
-        {notice ? (
-          <p className="mt-2 text-xs leading-relaxed text-success">{notice}</p>
-        ) : null}
-
-        <Button variant="outline" className="mt-2" onClick={handleOpen}>
-          修改密码
-        </Button>
-      </div>
+    <>
+      <SettingsRow
+        label="修改密码"
+        description="需要先验证当前密码。改完之后，其他设备上已登录的会话不会立即失效，会在 7 天后自然过期。"
+        action={
+          <Button variant="outline" onClick={handleOpen}>
+            修改密码
+          </Button>
+        }
+      >
+        {notice ? <p className="mt-2 text-xs leading-relaxed text-success">{notice}</p> : null}
+      </SettingsRow>
 
       <Sheet
         open={open}
@@ -149,6 +144,6 @@ export function PasswordSection() {
           ) : null}
         </div>
       </Sheet>
-    </section>
+    </>
   );
 }
