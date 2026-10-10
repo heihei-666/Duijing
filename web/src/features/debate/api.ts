@@ -79,6 +79,24 @@ export interface DebateInviteResult {
   link: string;
   participant_count: number;
   max_participants: number;
+  /**
+   * 带 `friend_ids` 邀请时，**真正发出邀请**的好友（方案 6.9）。
+   * 不带 friend_ids 时后端不返回这两个字段，所以是可选的。
+   */
+  invited?: DebateInvitedFriend[];
+  /** 被跳过的：已经是成员 / 已有待接受的邀请 / 本轮名额已满 */
+  skipped?: DebateSkippedFriend[];
+}
+
+export interface DebateInvitedFriend {
+  user_id: number;
+  invitation_id: number;
+}
+
+/** `reason` 是机器可读的短标识（如 `already_invited`），前端负责翻译成人话 */
+export interface DebateSkippedFriend {
+  user_id: number;
+  reason: string;
 }
 
 /** `POST /api/debates/{id}/abandon-round` 的真实返回 */
@@ -156,8 +174,19 @@ export function dismissDebateObservations(id: number): Promise<DebateDismissResu
 }
 
 /** 生成邀请链接 */
-export function inviteToDebate(id: number): Promise<DebateInviteResult> {
-  return apiRequest<DebateInviteResult>(`/debates/${id}/invite`, { method: 'POST' });
+/**
+ * 邀请（POST /api/debates/{id}/invite）。
+ *
+ * `friendIds` 为空时行为与从前**完全一致** —— 只生成链接（后端做了兼容）。
+ * 传了好友就额外给他们各发一条**待接受**的邀请：好友在自己那边点接受才进房间，
+ * 不会被直接拉进私密房间。这是刻意的不对称：
+ * 「我邀请你」和「你已经在我的房间里」是两件强度完全不同的事。
+ */
+export function inviteToDebate(id: number, friendIds: number[] = []): Promise<DebateInviteResult> {
+  return apiRequest<DebateInviteResult>(`/debates/${id}/invite`, {
+    method: 'POST',
+    body: { friend_ids: friendIds },
+  });
 }
 
 /**

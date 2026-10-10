@@ -604,6 +604,9 @@ export default function DebateRoomPage() {
         loading={inviting}
         error={inviteError}
         onClose={() => setInviteOpen(false)}
+        roomId={roomId}
+        // 好友接受邀请后会走 SSE 推过来，但自己的参与者数要立刻刷新才跟得上
+        onInvited={() => void handleInvite()}
       />
 
       <ReminderSheet
