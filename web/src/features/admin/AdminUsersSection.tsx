@@ -83,9 +83,8 @@ export function AdminUsersSection() {
   if (!currentUser?.is_admin) return null;
 
   return (
-    <section className="rounded-xl bg-surface px-4 py-4">
-      <h3 className="text-[15px] font-medium text-primary">用户管理</h3>
-      <p className="mt-1 text-xs leading-relaxed text-tertiary">
+    <>
+      <p className="text-xs leading-relaxed text-tertiary">
         这个实例没有邮件和短信，用户忘了密码只能由管理员重置。
       </p>
 
@@ -169,6 +168,6 @@ export function AdminUsersSection() {
           );
         })}
       </ul>
-    </section>
+    </>
   );
 }

@@ -49,9 +49,7 @@ export function NotificationSettings() {
   }
 
   return (
-    <section className="rounded-2xl border border-light bg-surface px-4 py-4 shadow-card">
-      <h3 className="text-[13px] text-secondary">通知</h3>
-
+    <>
       {/* 整行都是开关的触控目标（48px > 44px），视觉上只有一个朴素的滑块 */}
       <button
         type="button"
@@ -109,6 +107,6 @@ export function NotificationSettings() {
           不确定通没通的时候点一下，通知栏里出现就是通了。
         </p>
       </div>
-    </section>
+    </>
   );
 }

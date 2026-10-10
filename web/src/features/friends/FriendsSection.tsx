@@ -122,9 +122,7 @@ export function FriendsSection() {
   }
 
   return (
-    <section className="rounded-2xl border border-light bg-surface px-4 py-4 shadow-card">
-      <h3 className="text-[13px] text-secondary">好友</h3>
-
+    <>
       {/* 边界要先说清楚，否则用户不敢加人 */}
       <p className="mt-2 text-xs leading-relaxed text-tertiary">
         好友之间默认互不可见。
@@ -356,6 +354,6 @@ export function FriendsSection() {
 
       {error ? <p className="mt-3 text-xs leading-relaxed text-danger">{error}</p> : null}
       {notice ? <p className="mt-3 text-xs leading-relaxed text-secondary">{notice}</p> : null}
-    </section>
+    </>
   );
 }

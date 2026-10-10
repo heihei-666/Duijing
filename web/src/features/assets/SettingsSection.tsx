@@ -6,10 +6,12 @@ import { Button } from '@/components/common/Button';
 import { NotificationSettings } from '@/features/push/NotificationSettings';
 import { FriendsSection } from '@/features/friends/FriendsSection';
 import { PasswordSection } from '@/features/assets/PasswordSection';
+import { SettingsGroup, SettingsRow } from '@/features/assets/SettingsGroup';
 import { AdminUsersSection } from '@/features/admin/AdminUsersSection';
 import { CheckIcon, CopyIcon } from '@/features/weakness/icons';
 import { copyText } from '@/features/assets/clipboard';
 import { formatTimestamp } from '@/lib/date';
+import { ADMIN_ROLE, canSee } from '@/lib/roles';
 import { useAuthStore } from '@/store/auth';
 
 /**
@@ -19,6 +21,9 @@ import { useAuthStore } from '@/store/auth';
  */
 export function SettingsSection() {
   const logout = useAuthStore((state) => state.logout);
+  // 分组可见性按角色判定（见 lib/roles.ts）。用 user 而不是 is_admin，
+  // 是为了将来加角色时只改 rolesOf 一处。
+  const currentUser = useAuthStore((state) => state.user);
 
   const [invite, setInvite] = useState<InviteInfo | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -82,9 +87,27 @@ export function SettingsSection() {
 
   return (
     <div className="space-y-4">
-      <section className="rounded-2xl border border-light bg-surface px-4 py-4 shadow-card">
-        <h3 className="text-[13px] text-secondary">我的邀请码</h3>
+      {/*
+        ── 管理 ─────────────────────────────────────────────────
 
+        角色独有的组放在**最前面**：管理员进来第一眼就该看到管理入口，
+        而不是滚到底才找到。
+
+        将来加别的角色（督导、只读观察者…）时，它的组也加在这里、
+        在通用组之前 —— 这是约定，不是巧合。
+
+        `canSee` 只是不给出一个注定 403 的入口；真正的鉴权在服务端
+        （`require_admin`）。前端隐藏从来不是安全边界。
+      */}
+      {canSee([ADMIN_ROLE], currentUser) ? (
+        <SettingsGroup title="管理">
+          <AdminUsersSection />
+        </SettingsGroup>
+      ) : null}
+
+      {/* ── 账号 ──────────────────────────────────────────────── */}
+      <SettingsGroup title="账号">
+        <SettingsRow label="我的邀请码" description="分享给朋友，他们凭码注册。">
         {invite === null ? (
           <p className="mt-3 text-[13px] text-tertiary">{error ?? '正在读取…'}</p>
         ) : (
@@ -148,25 +171,26 @@ export function SettingsSection() {
 
         {error && invite !== null ? <p className="mt-2 text-xs text-danger">{error}</p> : null}
         {notice ? <p className="mt-2 text-xs text-tertiary">{notice}</p> : null}
-      </section>
+      </SettingsRow>
 
-      {/* 用户管理（只有管理员渲染；组件内部自己判断，非管理员返回 null） */}
-      <AdminUsersSection />
-
-      {/* 好友（方案 3.10）：只做「能被你拉进辩论房的人」，看不到任何弱点数据 */}
-      <FriendsSection />
-
-      {/* 通知：默认不推送，唯一例外是用户自己约的辩论提醒 */}
-      <NotificationSettings />
-
-      {/* 账号安全（方案 6.10）：紧挨「关于与数据」，因为两者都是
-          「账号级、极少用」的动作，扫设置页时应该在同一屏里看到。
-          但**不并进那一节** —— 「关于与数据」的整体论述是《个人信息保护法》
-          的数据可携带/可删除，修改密码不属于那个语义。 */}
+      {/* 修改密码和邀请码同属「账号」—— 都是账号的基础设置 */}
       <PasswordSection />
+      </SettingsGroup>
 
-      {/* 关于与数据：导出（可携带）与注销申请（可删除） */}
-      <AccountDataSection />
+      {/* ── 社交 ────────────────────────────────────────────── */}
+      <SettingsGroup title="社交">
+        <FriendsSection />
+      </SettingsGroup>
+
+      {/* ── 通知 ────────────────────────────────────────────── */}
+      <SettingsGroup title="通知">
+        <NotificationSettings />
+      </SettingsGroup>
+
+      {/* ── 数据 ────────────────────────────────────────────── */}
+      <SettingsGroup title="数据">
+        <AccountDataSection />
+      </SettingsGroup>
 
       <Button variant="outline" fullWidth loading={loggingOut} onClick={() => void handleLogout()}>
         登出
@@ -364,29 +388,22 @@ function AccountDataSection() {
   }
 
   return (
-    <section className="rounded-2xl border border-light bg-surface px-4 py-4 shadow-card">
-      <h3 className="text-[13px] text-secondary">关于与数据</h3>
-      <p className="mt-2 text-xs leading-relaxed text-tertiary">
-        这些记录是你写的，随时可以带走。
-      </p>
+    <>
+      {/*
+        「拿走我的数据」和「删掉我的数据」原本挤在同一节里，
+        但两者的心理分量完全不同 —— 拆成两行之后才看得清。
+      */}
+      <SettingsRow
+        label="导出数据"
+        description="下载一个 JSON 文件：弱点、回环与撑住记录、优势、原则、事件卡、辩论与复盘、提醒。不包含密码。"
+        action={
+          <Button variant="outline" loading={exporting} onClick={() => void handleExport()}>
+            导出
+          </Button>
+        }
+      />
 
-      <div className="mt-3">
-        <Button
-          variant="outline"
-          fullWidth
-          loading={exporting}
-          onClick={() => void handleExport()}
-        >
-          导出我的全部数据
-        </Button>
-        <p className="mt-2 text-xs leading-relaxed text-tertiary">
-          下载一个 JSON 文件：弱点、回环与撑住记录、优势、原则、事件卡、辩论与复盘、提醒。
-          不包含密码。
-        </p>
-      </div>
-
-      <div className="mt-4 border-t border-light pt-3">
-        <p className="text-[13px] text-secondary">注销账号</p>
+      <SettingsRow label="注销账号">
 
         {deletion === null ? (
           <p className="mt-2 text-xs leading-relaxed text-tertiary">{loadError ?? '正在读取…'}</p>
@@ -455,7 +472,7 @@ function AccountDataSection() {
 
         {error ? <p className="mt-2 text-xs leading-relaxed text-danger">{error}</p> : null}
         {notice ? <p className="mt-2 text-xs leading-relaxed text-secondary">{notice}</p> : null}
-      </div>
-    </section>
+      </SettingsRow>
+    </>
   );
 }
