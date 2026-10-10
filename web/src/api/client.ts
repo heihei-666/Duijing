@@ -55,6 +55,10 @@ import type {
   StatusBar,
 } from './types';
 
+// Bearer 兜底令牌：httpOnly Cookie 靠不住的环境（微信内置浏览器）用。
+// 详见 token.ts 顶部的证据与取舍说明。
+import { clearBearerToken, getBearerToken, setBearerToken } from './token';
+
 const API_PREFIX = '/api';
 
 /** 已登录时不应该再看到的路由，用于避免 401 后的重复跳转 */
@@ -152,6 +156,11 @@ async function resolveErrorMessage(response: Response): Promise<string> {
 async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const { method = 'GET', body, query, redirectOn401 = true, signal } = options;
 
+  // 有兜底令牌就带上。**后端里 Bearer 优先于 Cookie**
+  // （见 app/deps.py::extract_token），所以这个令牌必须与 Cookie 同生共死：
+  // 一旦留下陈旧的 token，它会盖住仍然有效的 Cookie，把「能用」变成「不能用」。
+  const bearer = getBearerToken();
+
   let response: Response;
   try {
     response = await fetch(`${API_PREFIX}${path}${buildQuery(query)}`, {
@@ -160,6 +169,7 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
       headers: {
         Accept: 'application/json',
         ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
+        ...(bearer ? { Authorization: `Bearer ${bearer}` } : {}),
       },
       body: body === undefined ? undefined : JSON.stringify(body),
       signal,
@@ -172,7 +182,12 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
 
   if (response.status === 401) {
     const message = await resolveErrorMessage(response);
-    if (redirectOn401) redirectToLogin();
+    if (redirectOn401) {
+      // 这条请求本该是已登录状态，却拿到 401 —— 会话已经失效，
+      // 顺手清掉兜底令牌，免得它继续盖住（可能仍然有效的）Cookie。
+      clearBearerToken();
+      redirectToLogin();
+    }
     throw new ApiError(message, 401);
   }
 
@@ -196,6 +211,10 @@ export const authApi = {
       method: 'POST',
       body: payload,
       redirectOn401: false,
+    }).then((res) => {
+      // 存下兜底令牌：微信内置浏览器不保存 Cookie，只能靠它维持会话
+      setBearerToken(res.token);
+      return res;
     }),
 
   /** 登录 → `{ user, token }` */
@@ -204,10 +223,17 @@ export const authApi = {
       method: 'POST',
       body: payload,
       redirectOn401: false,
+    }).then((res) => {
+      setBearerToken(res.token);
+      return res;
     }),
 
   logout: () =>
-    request<OkResponse>('/auth/logout', { method: 'POST', redirectOn401: false }),
+    request<OkResponse>('/auth/logout', { method: 'POST', redirectOn401: false }).finally(() => {
+      // 无论服务端是否成功，本地令牌都要清掉。
+      // 留着它就是留一个会盖住 Cookie 的陈旧凭证。
+      clearBearerToken();
+    }),
 
   /** 会话恢复 → `{ user }`；未登录时返回 401，属于正常情况，不跳转 */
   me: () => request<AuthMeResponse>('/auth/me', { redirectOn401: false }),

@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 
 import { authApi } from '@/api/client';
+import { clearBearerToken } from '@/api/token';
 import type { LoginPayload, RegisterPayload, User } from '@/api/types';
 
 export type AuthStatus = 'idle' | 'loading' | 'authenticated' | 'anonymous';
@@ -10,7 +11,15 @@ interface AuthState {
   user: User | null;
   /** idle = 还没恢复会话，loading = 正在恢复 */
   status: AuthStatus;
-  /** 应用启动时调 GET /api/auth/me 恢复会话（Cookie 认证，前端不存 token） */
+  /**
+   * 应用启动时调 `GET /api/auth/me` 恢复会话。
+   *
+   * 认证有两条路，服务端按「显式优先」取值（`app/deps.py::extract_token`）：
+   *   1. `Authorization: Bearer` —— 兜底，给不保存 Cookie 的浏览器用（微信内置浏览器）
+   *   2. httpOnly Cookie `dj_token` —— 主路径，普通浏览器走这条
+   *
+   * 前端不需要知道当前走的是哪条，只需保证两者同生共死（见 `api/token.ts`）。
+   */
   bootstrap: () => Promise<void>;
   /** 失败时抛出 ApiError，由页面决定怎么展示 */
   login: (payload: LoginPayload) => Promise<User>;
@@ -31,7 +40,10 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
       const { user } = await authApi.me();
       set({ user, status: 'authenticated' });
     } catch {
-      // 401 是正常情况（还没登录），不当成错误
+      // 401 是正常情况（还没登录），不当成错误。
+      // 但若本地存着兜底令牌，说明它是失效的 —— 必须清掉，
+      // 否则它会持续盖住可能仍然有效的 Cookie（Bearer 优先于 Cookie）。
+      clearBearerToken();
       set({ user: null, status: 'anonymous' });
     }
   },

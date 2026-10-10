@@ -333,6 +333,100 @@ class TestFriendshipOrdering:
         assert len(b.get("/api/friends").json()["friends"]) == 1
 
 
+def _invite_code_of(actor: Actor) -> str:
+    r = actor.get("/api/auth/invite")
+    assert r.status_code == 200, r.text
+    return r.json()["code"]
+
+
+class TestInviteSuggestions:
+    """方案 3.10「邀请关系」：用我的码注册的人应当被**建议**为好友，
+    但**不能自动成为好友**（邀请码是一个码，不是一对一凭证）。"""
+
+    def test_invited_user_is_suggested(self, client, unique_name):
+        a = register(client, unique_name("sa"))
+        code = _invite_code_of(a)
+        b = register(client, unique_name("sb"), invite_code=code)
+
+        r = a.get("/api/friends/suggestions")
+        assert r.status_code == 200, r.text
+        names = [s["username"] for s in r.json()["suggestions"]]
+        assert b.username in names, f"用我的码注册的 {b.username} 应出现在建议里，实际 {names}"
+
+    def test_suggestion_does_not_create_friendship(self, client, unique_name):
+        """关键：建议**只是建议**。点了也还得走申请 → 接受。"""
+        a = register(client, unique_name("sa"))
+        code = _invite_code_of(a)
+        register(client, unique_name("sb"), invite_code=code)
+
+        a.get("/api/friends/suggestions")
+        assert a.get("/api/friends").json()["friends"] == [], "建议不该自动建好友关系"
+
+    def test_already_friend_is_excluded(self, client, unique_name):
+        a = register(client, unique_name("sa"))
+        code = _invite_code_of(a)
+        b = register(client, unique_name("sb"), invite_code=code)
+        _befriend(client, a, b)
+
+        names = [s["username"] for s in a.get("/api/friends/suggestions").json()["suggestions"]]
+        assert b.username not in names
+
+    def test_pending_request_is_excluded(self, client, unique_name):
+        """已有待处理申请时不该重复引导 —— 否则用户会以为申请没发出去。"""
+        a = register(client, unique_name("sa"))
+        code = _invite_code_of(a)
+        b = register(client, unique_name("sb"), invite_code=code)
+        a.post("/api/friends/requests", json={"username": b.username})
+
+        names = [s["username"] for s in a.get("/api/friends/suggestions").json()["suggestions"]]
+        assert b.username not in names
+
+    def test_rejected_is_excluded(self, client, unique_name):
+        """拒绝是终态：不该因为「他是用我的码注册的」就把引导又塞回来。"""
+        a = register(client, unique_name("sa"))
+        code = _invite_code_of(a)
+        b = register(client, unique_name("sb"), invite_code=code)
+
+        rid = a.post("/api/friends/requests", json={"username": b.username}).json()["id"]
+        assert b.post(f"/api/friends/requests/{rid}/reject").status_code == 200
+
+        names = [s["username"] for s in a.get("/api/friends/suggestions").json()["suggestions"]]
+        assert b.username not in names, "被拒绝过的人不该再被建议"
+
+    def test_i_rejected_them_is_also_excluded(self, client, unique_name):
+        """反方向也一样：我拒绝了他，也不该再被建议。"""
+        a = register(client, unique_name("sa"))
+        code = _invite_code_of(a)
+        b = register(client, unique_name("sb"), invite_code=code)
+
+        rid = b.post("/api/friends/requests", json={"username": a.username}).json()["id"]
+        assert a.post(f"/api/friends/requests/{rid}/reject").status_code == 200
+
+        names = [s["username"] for s in a.get("/api/friends/suggestions").json()["suggestions"]]
+        assert b.username not in names
+
+    def test_uninvited_user_not_suggested(self, client, unique_name):
+        """不是我用邀请码拉进来的人，不该出现在建议里。"""
+        a = register(client, unique_name("sa"))
+        register(client, unique_name("sb"))  # 用引导管理员的码
+
+        names = [s["username"] for s in a.get("/api/friends/suggestions").json()["suggestions"]]
+        assert names == []
+
+    def test_suggestions_only_three_fields(self, client, unique_name):
+        """和建议无关的字段一律不返回（延续 3.10 的白名单精神）。"""
+        a = register(client, unique_name("sa"))
+        code = _invite_code_of(a)
+        register(client, unique_name("sb"), invite_code=code)
+
+        items = a.get("/api/friends/suggestions").json()["suggestions"]
+        assert len(items) == 1
+        assert set(items[0]) == {"user_id", "username", "nickname"}
+
+    def test_requires_login(self, client):
+        assert client.get("/api/friends/suggestions").status_code == 401
+
+
 class TestAuth:
     @pytest.mark.parametrize(
         "method,url",

@@ -6,6 +6,7 @@ import {
   getProfile,
   listFriends,
   listRequests,
+  listSuggestions,
   rejectRequest,
   removeFriend,
   searchUser,
@@ -14,6 +15,7 @@ import {
   type FriendItem,
   type FriendRequestItem,
   type SearchResult,
+  type UserBrief,
 } from '@/features/friends/api';
 
 /**
@@ -36,6 +38,8 @@ export function FriendsSection() {
   const [friends, setFriends] = useState<FriendItem[] | null>(null);
   const [incoming, setIncoming] = useState<FriendRequestItem[]>([]);
   const [outgoing, setOutgoing] = useState<FriendRequestItem[]>([]);
+  /** 用我的邀请码注册、但还不是好友的人（方案 3.10 邀请关系） */
+  const [suggestions, setSuggestions] = useState<UserBrief[]>([]);
   const [sharing, setSharing] = useState(false);
 
   const [keyword, setKeyword] = useState('');
@@ -48,10 +52,16 @@ export function FriendsSection() {
 
   const load = useCallback(async () => {
     try {
-      const [f, r, p] = await Promise.all([listFriends(), listRequests(), getProfile()]);
+      const [f, r, s, p] = await Promise.all([
+        listFriends(),
+        listRequests(),
+        listSuggestions(),
+        getProfile(),
+      ]);
       setFriends(f.friends);
       setIncoming(r.incoming);
       setOutgoing(r.outgoing);
+      setSuggestions(s.suggestions);
       setSharing(p.profile.share_progress_with_friends);
       setError(null);
     } catch (cause) {
@@ -161,6 +171,38 @@ export function FriendsSection() {
                     拒绝
                   </Button>
                 </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+
+      {/* ── 用你的邀请码注册的人（方案 3.10 邀请关系）──────── */}
+      {suggestions.length > 0 ? (
+        <div className="mt-4 rounded-xl bg-elevated px-3 py-3">
+          <p className="text-[13px] text-secondary">
+            用你的邀请码注册的人（{suggestions.length}）
+          </p>
+          <p className="mt-1 text-xs leading-relaxed text-tertiary">
+            他们已经是你的用户了，加好友后就能直接拉进辩论房。
+          </p>
+          <ul className="mt-2 space-y-2">
+            {suggestions.map((item) => (
+              <li key={item.user_id} className="flex items-center justify-between gap-2">
+                <span className="truncate text-[13px] text-primary">{item.nickname}</span>
+                <Button
+                  variant="outline"
+                  className="shrink-0"
+                  loading={busy === `sug-${item.user_id}`}
+                  disabled={busy !== null}
+                  onClick={() =>
+                    void run(`sug-${item.user_id}`, async () => {
+                      await sendRequest(item.username);
+                    }, `已向 ${item.nickname} 发出申请，等他接受`)
+                  }
+                >
+                  加好友
+                </Button>
               </li>
             ))}
           </ul>

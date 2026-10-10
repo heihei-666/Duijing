@@ -116,6 +116,50 @@ def profile_out(profile: UserProfile) -> dict:
     }
 
 
+# ── 修改密码 ──────────────────────────────────────────────────
+
+
+class PasswordChangePayload(BaseModel):
+    current_password: str = Field(..., max_length=128)
+    new_password: str = Field(..., max_length=128)
+
+
+@router.patch("/password")
+async def change_password(
+    payload: PasswordChangePayload,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """修改自己的密码。
+
+    **必须验当前密码**：JWT 是一次性签发的，如果只看「已登录」就允许改密码，
+    那么一台忘记登出的设备被人拿到，就能直接改密码把账号锁死。
+
+    ⚠️ **已知限制（必须知道）**：改密码**不会让其他设备已签发的 JWT 失效**。
+    这个项目用无状态 JWT + httpOnly cookie，没有 token 黑名单，
+    所以旧的 token 在 7 天有效期内仍然可用。
+
+    要做到「改密码 = 其他设备登出」，需要在 `user` 上加一列
+    `password_changed_at`，并在 `get_current_user` 里比对 JWT 的 `iat`。
+    那是独立的一次改动，这里先记下、不顺手做（避免把两件事混在一次发布里）。
+    """
+    from app.security import hash_password, validate_password_strength, verify_password
+
+    if not verify_password(payload.current_password, user.password_hash):
+        raise HTTPException(status_code=400, detail="当前密码不正确")
+
+    if payload.current_password == payload.new_password:
+        raise HTTPException(status_code=400, detail="新密码不能与当前密码相同")
+
+    problem = validate_password_strength(payload.new_password)
+    if problem:
+        raise HTTPException(status_code=400, detail=problem)
+
+    user.password_hash = hash_password(payload.new_password)
+    await session.commit()
+    return {"ok": True}
+
+
 def _row(obj, fields: tuple[str, ...]) -> dict:
     """把 ORM 对象转成可 JSON 化的 dict。
 

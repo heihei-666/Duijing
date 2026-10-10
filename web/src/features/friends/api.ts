@@ -49,6 +49,18 @@ export function listFriends(): Promise<{ friends: FriendItem[] }> {
   return apiRequest<{ friends: FriendItem[] }>('/friends');
 }
 
+/**
+ * 「用你的邀请码注册的人」（方案 3.10 邀请关系）。
+ *
+ * 只是**建议** —— 点击后仍走 `sendRequest()`，对方接受才成为好友。
+ * 理由：邀请码是一个码、不是一对一凭证，谁拿到都能注册；而好友意味着
+ * 能把你拉进辩论房、能看到你的连续天数。「注册」和「我同意你进我的私密空间」
+ * 是强度完全不同的两件事。
+ */
+export function listSuggestions(): Promise<{ suggestions: UserBrief[] }> {
+  return apiRequest<{ suggestions: UserBrief[] }>('/friends/suggestions');
+}
+
 /** 按用户名**精确**查找。后端刻意不做模糊搜索——那等于提供「浏览全站用户」的入口。 */
 export function searchUser(username: string): Promise<SearchResult> {
   return apiRequest<SearchResult>('/friends/search', { query: { username } });
