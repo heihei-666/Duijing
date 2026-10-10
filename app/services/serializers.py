@@ -29,10 +29,17 @@ from app.utils import days_since, iso_utc
 
 
 def user_out(user: User) -> dict:
+    """当前用户的序列化（只被 `api/auth.py` 用于登录/注册/me）。
+
+    `is_admin` 是**用户自己的标志**，不是别人的 —— 前端需要它来决定
+    要不要显示管理区块。这里不是把管理权限列表暴露出去，只是让本人
+    知道自己是不是管理员，否则界面只能靠「请求 403 再隐藏」来猜。
+    """
     return {
         "id": user.id,
         "username": user.username,
         "nickname": user.nickname or user.username,
+        "is_admin": user.is_admin,
         "created_at": iso_utc(user.created_at),
     }
 

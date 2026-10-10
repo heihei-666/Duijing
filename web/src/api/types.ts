@@ -77,6 +77,8 @@ export interface User {
   id: number;
   username: string;
   nickname: string;
+  /** 本人是不是管理员。服务端在 login / register / me 里返回（见 serializers.user_out）。 */
+  is_admin: boolean;
   created_at: string;
 }
 

@@ -197,3 +197,49 @@ class TestAdminReset:
             pw = _temp_password()
             assert not re.search(r"[0O1lI]", pw), f"含易混字符：{pw}"
             assert len(pw) >= 8
+
+
+class TestIsAdminExposed:
+    """`/api/auth/me` 等接口要返回 `is_admin`（本人自己的标志）。
+
+    前端靠它决定要不要渲染管理区块。没有这个字段，界面只能靠
+    「先请求、拿到 403 再隐藏」来猜 —— 那会在管理员每次进设置页时
+    都打一次注定失败的请求，而且非管理员会看到一闪而过的空区块。
+    """
+
+    def test_me_includes_is_admin(self, client, unique_name):
+        actor = register(client, unique_name("ia"))
+        body = actor.get("/api/auth/me").json()
+        assert "is_admin" in body["user"], f"缺少 is_admin：{body['user']}"
+        # conftest 的引导账号才是管理员，普通注册用户不是
+        assert body["user"]["is_admin"] is False
+
+    def test_login_includes_is_admin(self, client, unique_name):
+        actor = register(client, unique_name("ib"))
+        r = client.post(
+            "/api/auth/login",
+            json={"username": actor.username, "password": "TestPass123"},
+        )
+        assert r.status_code == 200
+        assert "is_admin" in r.json()["user"]
+
+    def test_admin_sees_true(self, client, unique_name):
+        """真正的管理员必须拿到 true —— 否则他自己的设置页里没有管理区块。"""
+        import asyncio
+
+        from sqlalchemy import select
+
+        from app.db import session_scope
+        from app.models import User
+
+        actor = register(client, unique_name("ic"))
+
+        async def promote() -> None:
+            async with session_scope() as s:
+                u = await s.scalar(select(User).where(User.username == actor.username))
+                assert u is not None
+                u.is_admin = True
+
+        asyncio.run(promote())
+
+        assert actor.get("/api/auth/me").json()["user"]["is_admin"] is True
