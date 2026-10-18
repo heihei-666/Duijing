@@ -53,7 +53,8 @@
 
 ```jsonc
 // User
-{ "id": 1, "username": "alice", "nickname": "爱丽丝", "created_at": "..." }
+// is_admin / is_guest 是**本人**的标志，只由 login / register / me / guest / claim 返回
+{ "id": 1, "username": "alice", "nickname": "爱丽丝", "is_admin": false, "is_guest": false, "created_at": "..." }
 
 // WeaknessCard
 {
@@ -146,6 +147,8 @@
 |---|---|---|
 | POST | `/api/auth/register` | 邀请码注册 |
 | POST | `/api/auth/login` | 登录 |
+| POST | `/api/auth/guest` | **创建访客账号**（匿名体验用，见第 16 章） |
+| POST | `/api/auth/claim` | **认领访客账号**（体验完注册，见第 16 章） |
 | POST | `/api/auth/logout` | 登出 |
 | GET | `/api/auth/me` | 当前用户 |
 | GET | `/api/auth/invite` | 我的邀请码与链接 |
@@ -679,3 +682,86 @@ Service Worker 通过 `push` 事件接收，`notificationclick` 打开 `url`。
 > 导出**不包含** `password_hash`。
 > 注销是**申请标记 + 人工确认**，不是即时物理删除；申请期间账号仍可正常使用，
 > 但推送订阅会被撤销。
+
+---
+
+## 16. 访客模式（v1.3）
+
+「先体验后注册」：未登录用户可以先辩一场，**结束后**才被问要不要保存。
+
+### 16.1 设计：访客是一条真实的 `user` 记录
+
+访客不是「可空的 user_id」，而是一条 `is_guest = true` 的普通用户：
+辩论 / 观察 / 复盘的 56 处 `user.id` 依赖**一行都不用改**。
+
+| 字段 | 访客创建时 | 认领后 |
+|---|---|---|
+| `username` | `guest_` + 16 位随机串 | 用户自己填 |
+| `password_hash` | 随机串（**认领前无法登录**） | 用户自己填 |
+| `nickname` | `访客` | 用户填或沿用用户名 |
+| `is_guest` | `true` | `false` |
+| `id` | —— | **不变**（数据原地继承，不搬迁） |
+
+### 16.2 `POST /api/auth/guest`
+
+无请求体。创建访客并直接签发令牌（与 login 一样同时下发 Cookie 和 `token`）。
+
+```jsonc
+// 响应 201
+{ "user": { "id": 9, "username": "guest_ab12cd34ef56gh78", "nickname": "访客",
+            "is_admin": false, "is_guest": true, "created_at": "..." },
+  "token": "...", "is_guest": true }
+```
+
+| 状态码 | 含义 |
+|---|---|
+| 429 | 全站试用预算已满（`{"detail":"今日试用人次已满，请注册后继续。"}`） |
+| 429 | 创建过于频繁（`GUEST_CREATE_PER_MIN`，默认 6 次/分钟/IP） |
+
+> 预算在这里也查一次：建账号不花钱，但**建了却用不了**是最糟的体验。
+> 这只是提前失败，真正的硬上限仍在 `POST /api/debates`（见 16.4）。
+
+### 16.3 `POST /api/auth/claim`
+
+把**当前访客账号**原地变成正式账号，并**重签令牌**（JWT 里带 username，改名后旧令牌里的 username 就过期了）。
+
+```jsonc
+// 请求
+{ "username": "alice", "password": "至少8位", "nickname": "" }   // nickname 选填，留空用用户名兜底
+// 响应 200
+{ "user": { "id": 9, "username": "alice", "nickname": "alice",
+            "is_admin": false, "is_guest": false, "created_at": "..." },
+  "token": "..." }
+```
+
+| 状态码 | 含义 |
+|---|---|
+| 400 | 当前账号不是访客（`{"detail":"当前账号不是访客账号，无需认领"}`） |
+| 400 | 用户名不合规 / 密码太弱（规则见 `app/security.py`：3–32 位字母数字`_``-`；密码 ≥ 8 位且非纯数字） |
+| 409 | 用户名已被占用 |
+| 401 | 未登录（没有可认领的账号） |
+
+> **认领不需要邀请码**。这是有意的：从落地页进来的人手上不可能有码。
+> 代价是邀请制事实上变成「邀请码，或完成一次访客体验」——这是产品决定，
+> 记在这里而不是让它悄悄发生。
+
+### 16.4 访客成本上限
+
+在**调用 AI 之前**拦截，三道上限（`app/services/guest.py`）：
+
+| # | 口径 | 存储 | 状态码 |
+|---|---|---|---|
+| ① | 单访客 2 次/天（`GUEST_DEBATES_PER_DAY`） | 数据库 | 403 |
+| ② | 单 IP 2 次/天（同上，防清缓存换身份） | **内存，重启清零** | 403 |
+| ③ | 全站 100 次/天（`GUEST_DAILY_BUDGET`） | 数据库 | 429 |
+
+三道的报错文案都以「注册后继续」结尾 —— **限额文案本身就是转化点**。
+
+### 16.5 前端约定
+
+- 访客与正式账号共用同一套页面和接口，判定只看 `User.is_guest`（`web/src/lib/roles.ts::isGuest`）。
+- 访客只用 `/start`（开辩页）和 `/debates/{id}`（辩论房）两个页面；
+  弱点墙 / 资产 / 设置 / 多人邀请由 `RequireFullAccount` 拦下。
+- 访客身份靠浏览器里的 Cookie / Bearer 令牌识别，**换设备或清理浏览器数据就找不回来**。
+- `GUEST_RETENTION_DAYS` 目前是**预留配置**：清理任务还没实现，
+  界面也因此不承诺「N 天后清理」。见 [`CONFIG.md`](./CONFIG.md)。

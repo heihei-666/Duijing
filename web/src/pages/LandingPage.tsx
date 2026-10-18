@@ -1,6 +1,9 @@
+import { useCallback, useState } from 'react';
 import { Link } from 'react-router-dom';
 
 import { Button } from '@/components/common/Button';
+import { GUEST_COPY } from '@/features/guest/copy';
+import { useAuthStore, type GuestEntry } from '@/store/auth';
 
 /**
  * 落地页 —— 未登录用户访问 `/` 时看到的第一屏。
@@ -19,13 +22,46 @@ import { Button } from '@/components/common/Button';
  * 这个产品最独特的地方是辩论房里那句「AI 全程观察但一个字都不说」——
  * 它天然就是「发现」而不是「纠正」。
  *
- * 【阶段说明】
+ * 【两个按钮都进访客模式，但落点不同】
  *
- * 阶段 1（现在）：主按钮暂时导向注册页 —— 访客模式（阶段 2）还没做，
- *   点了没有别的地方可去。这是**有意的临时状态**，不是漏了。
- * 阶段 2 会把 CTA 改成「直接进入访客辩论房」。
+ *   主按钮「免费试用 3 分钟微辩论」→ /start，预设题点一下就能开局（零输入）
+ *   副按钮「记下一件让你不爽的事」→ /start，但先摆出描述框
+ *
+ * 副按钮不是「另一个功能」，而是**同一个功能的另一种起点**：
+ * 说不出「辩题」是很正常的事，说得出一件刚发生的窝囊事才是常态。
+ * 后端 `scene` 字段就是为此存在的（AI 把它转成辩题）。
+ *
+ * 【为什么这里只管建号，不管跳转】
+ *
+ * 建号成功后 `status` 变 authenticated，`RootLayout` 会立刻把访客
+ * 重定向到 `/start`。如果这里再 `navigate` 一次，两条跳转就会打架
+ * （后发生的那条会覆盖前一条，把入口意图丢掉）。
+ * 所以跳转只有 RootLayout 一处，这里只负责「建号 + 记下从哪个按钮进来」。
  */
 export function LandingPage() {
+  const enterGuestMode = useAuthStore((state) => state.enterGuestMode);
+
+  const [entering, setEntering] = useState<GuestEntry | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleEnter = useCallback(
+    async (target: GuestEntry) => {
+      if (entering) return;
+      setEntering(target);
+      setError(null);
+      try {
+        // 成功的话这一页马上会被 RootLayout 换成 /start，不需要再 navigate
+        await enterGuestMode(target);
+      } catch (cause) {
+        setError(cause instanceof Error ? cause.message : '暂时没能进入体验，请稍后再试');
+        setEntering(null);
+      }
+    },
+    [enterGuestMode, entering],
+  );
+
+  const busy = entering !== null;
+
   return (
     <div className="min-h-screen bg-base">
       <div className="mx-auto flex min-h-screen w-full max-w-2xl flex-col justify-center px-6 py-12 lg:max-w-3xl">
@@ -45,23 +81,36 @@ export function LandingPage() {
 
         {/* ── 体验入口 ─────────────────────────────────────── */}
         <div className="mx-auto mt-10 w-full max-w-sm space-y-3">
-          {/*
-            ⚠️ 阶段 2 会把这个按钮改成「进入访客辩论房」。
-            现在导向注册，是因为访客模式还不存在 —— 点了必须有地方可去。
-          */}
-          <Link to="/register" className="block">
-            <Button fullWidth>免费试用 3 分钟微辩论</Button>
-          </Link>
+          <Button
+            fullWidth
+            size="lg"
+            loading={entering === 'debate'}
+            disabled={busy}
+            onClick={() => void handleEnter('debate')}
+          >
+            {GUEST_COPY.ctaPrimary}
+          </Button>
 
-          <Link to="/register" className="block">
-            <Button variant="outline" fullWidth>
-              记下一件让你不爽的事
-            </Button>
-          </Link>
+          <Button
+            variant="outline"
+            fullWidth
+            size="lg"
+            loading={entering === 'scene'}
+            disabled={busy}
+            onClick={() => void handleEnter('scene')}
+          >
+            {GUEST_COPY.ctaSecondary}
+          </Button>
 
-          <p className="pt-1 text-center text-xs leading-relaxed text-tertiary">
-            不需要先注册。体验完再决定要不要保存。
-          </p>
+          {error ? (
+            <p className="rounded-xl border border-danger-light bg-danger-light px-3 py-2.5 text-center text-[13px] leading-relaxed text-primary">
+              {error}
+            </p>
+          ) : (
+            <p className="pt-1 text-center text-xs leading-relaxed text-tertiary">
+              {GUEST_COPY.ctaHint}
+            </p>
+          )}
         </div>
 
         {/* ── 三个特征 ─────────────────────────────────────── */}

@@ -34,6 +34,7 @@ from app.security import (
     validate_username,
     verify_password,
 )
+from app.services.guest import ensure_guest_budget_available
 from app.services.ratelimit import (
     client_ip,
     enforce,
@@ -204,6 +205,12 @@ async def create_guest(
 
     虽然建访客本身不花 AI 钱，但不限制的话可以被刷出大量临时账号，
     把 7 天清理任务的负担和数据库撑大。AI 成本的上限在**发起辩论**那一步。
+
+    【为什么还要在这里查全站预算】
+
+    建账号不花钱，但**建了却用不了**是最糟的体验：用户看到「免费试用」、
+    点进来、写好场景、点开始，才被告知「今日试用人次已满」。
+    在门口拦下，他至少还能当场看到「请注册后继续」这句话。
     """
     enforce(
         login_limiter,
@@ -211,6 +218,10 @@ async def create_guest(
         settings.GUEST_CREATE_PER_MIN,
         "创建访客过于频繁，请稍后再试",
     )
+
+    # 全站预算打满时**连访客账号都不建**：否则用户会先拿到账号、
+    # 走到开辩页、点了开始才被告知「今天试用人次已满」，白花三步。
+    await ensure_guest_budget_available(session)
 
     # token_urlsafe 含 - 和 _，去掉后只留字母数字，避免用户名里出现奇怪字符
     suffix = secrets.token_urlsafe(16).replace("-", "").replace("_", "")[:16]

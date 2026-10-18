@@ -127,6 +127,8 @@ class TestAdminUserList:
                 "username",
                 "nickname",
                 "is_admin",
+                # 访客也在用户列表里；不标出来管理员分不清 guest_xxxx 是什么
+                "is_guest",
                 "created_at",
                 "deletion_requested_at",
             }, f"字段集变了：{set(item)}"

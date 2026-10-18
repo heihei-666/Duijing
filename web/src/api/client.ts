@@ -27,6 +27,8 @@
 import type {
   AuthMeResponse,
   AuthResponse,
+  ClaimPayload,
+  ClaimResponse,
   DailyState,
   DailyStatePayload,
   DebateAbandonRoundResponse,
@@ -43,6 +45,7 @@ import type {
   EventCardCreatePayload,
   EventCardCreateResponse,
   EventCardListResponse,
+  GuestAuthResponse,
   InviteInfo,
   InviteRotateResponse,
   LoginPayload,
@@ -237,6 +240,39 @@ export const authApi = {
 
   /** 会话恢复 → `{ user }`；未登录时返回 401，属于正常情况，不跳转 */
   me: () => request<AuthMeResponse>('/auth/me', { redirectOn401: false }),
+
+  /**
+   * 创建访客账号 → `{ user, token, is_guest: true }`
+   *
+   * 这是「先体验后注册」的入口：拿到的是**功能完整的临时账号**，
+   * 能正常建辩论 / 发言 / 拿复盘，只是 `is_guest = true`。
+   * 额度由后端 `app/services/guest.py` 卡死（单访客 2 次/天、单 IP 2 次/天、
+   * 全站 100 次/天），所以这里不需要前端再做任何限流。
+   */
+  createGuest: () =>
+    request<GuestAuthResponse>('/auth/guest', {
+      method: 'POST',
+      redirectOn401: false,
+    }).then((res) => {
+      // 和 register / login 一样：存兜底令牌，微信内置浏览器不保存 Cookie
+      setBearerToken(res.token);
+      return res;
+    }),
+
+  /**
+   * 认领访客账号 → `{ user, token }`
+   *
+   * 后端会**原地**把当前访客改成正式账号（同一个 id，数据不动）并重签令牌，
+   * 所以必须把新令牌存下来 —— 旧令牌里的 username 已经过期了。
+   */
+  claim: (payload: ClaimPayload) =>
+    request<ClaimResponse>('/auth/claim', {
+      method: 'POST',
+      body: payload,
+    }).then((res) => {
+      setBearerToken(res.token);
+      return res;
+    }),
 
   invite: () => request<InviteInfo>('/auth/invite'),
 

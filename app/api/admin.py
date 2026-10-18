@@ -56,6 +56,10 @@ async def list_users(
                 "username": u.username,
                 "nickname": u.nickname or u.username,
                 "is_admin": u.is_admin,
+                # 访客（is_guest）也在这张列表里 —— 它们是真 user 记录。
+                # 不标出来管理员会看到一堆 guest_xxxx，分不清哪些是待转化的访客、
+                # 哪些是正经账号。也方便将来做「未认领访客」的清理。
+                "is_guest": u.is_guest,
                 "created_at": iso_utc(u.created_at),
                 # 注销申请：管理员要能看到谁申请了注销，好去人工确认
                 "deletion_requested_at": iso_utc(u.deletion_requested_at),
