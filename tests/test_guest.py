@@ -31,6 +31,12 @@ def _relax_guest_rate_limit(monkeypatch):
     **这个 fixture 本身就是限流生效的旁证**：第一次跑测试时它把用例挡成了 429。
     """
     monkeypatch.setattr(settings, "GUEST_CREATE_PER_MIN", 10000)
+    # IP 日计数是**进程内内存**的，不清会和别的用例串。见 services/guest.py 的说明。
+    from app.services.guest import reset_ip_buckets
+
+    reset_ip_buckets()
+    yield
+    reset_ip_buckets()
 
 
 def _make_guest(client):
@@ -115,3 +121,116 @@ class TestGuestDoesNotPolluteNormalUsers:
         actor = register(client, unique_name("ng"))
         me = actor.get("/api/auth/me").json()["user"]
         assert me["is_guest"] is False, "普通用户不能被误标成访客"
+
+
+class TestGuestCostQuota:
+    """访客会真实消耗 AI 额度，限额必须在**花钱之前**拦住。"""
+
+    def _new_debate(self, actor, n: int):
+        return actor.post(
+            "/api/debates",
+            json={"topic": f"测试辩题 {n}：我为什么会因为这点小事生气", "rounds": 4},
+        )
+
+    def test_daily_limit_blocks_third_debate(self, client, monkeypatch):
+        from app.config import settings as s
+
+        monkeypatch.setattr(s, "GUEST_DEBATES_PER_DAY", 2)
+        actor, _ = _make_guest(client)
+
+        assert self._new_debate(actor, 1).status_code == 201
+        assert self._new_debate(actor, 2).status_code == 201
+
+        blocked = self._new_debate(actor, 3)
+        assert blocked.status_code == 403, f"第三次应被拦下: {blocked.text}"
+        detail = blocked.json()["detail"]
+        # 报错文案本身是转化点，必须提到注册
+        assert "注册" in detail, f"限额文案应该引导注册: {detail}"
+
+    def test_global_budget_blocks_everyone(self, client, monkeypatch):
+        """全站预算打满时，即使这个访客自己还没用完也要拦 —— 这是防换 IP 的兜底。"""
+        from app.config import settings as s
+
+        monkeypatch.setattr(s, "GUEST_DAILY_BUDGET", 0)
+        actor, _ = _make_guest(client)
+        r = self._new_debate(actor, 1)
+        assert r.status_code == 429, f"全站预算为 0 时应拦截: {r.text}"
+        assert "已满" in r.json()["detail"]
+
+    def test_normal_user_has_no_quota(self, client, unique_name, monkeypatch):
+        """限额只对访客生效 —— 普通用户不能受影响。"""
+        from app.config import settings as s
+        from tests.conftest import register
+
+        monkeypatch.setattr(s, "GUEST_DEBATES_PER_DAY", 0)
+        actor = register(client, unique_name("nq"))
+        assert self._new_debate(actor, 1).status_code == 201
+
+
+class TestClaimGuest:
+    """认领：访客变正式账号，**数据原地继承，不搬家**。"""
+
+    def test_claim_converts_and_keeps_data(self, client, unique_name):
+        actor, body = _make_guest(client)
+        old_id = body["user"]["id"]
+
+        # 访客先产生一点数据
+        created = actor.post(
+            "/api/debates",
+            json={"topic": "认领前我做的这场辩论", "rounds": 4},
+        )
+        assert created.status_code == 201
+        room_id = created.json().get("room", {}).get("id") or created.json().get("id")
+
+        name = unique_name("cl")
+        claimed = actor.post(
+            "/api/auth/claim",
+            json={"username": name, "password": "ClaimPass123", "nickname": name},
+        )
+        assert claimed.status_code == 200, claimed.text
+        u = claimed.json()["user"]
+        assert u["is_guest"] is False
+        assert u["username"] == name
+        assert u["id"] == old_id, "认领必须原地继承，不能新建账号"
+
+        # 数据还在（同一个 id，所以辩论记录天然还在）
+        me = actor.get("/api/auth/me")
+        assert me.status_code == 200
+        assert me.json()["user"]["username"] == name
+        if room_id:
+            room = actor.get(f"/api/debates/{room_id}")
+            assert room.status_code == 200, "认领后应该还能看到自己认领前的辩论"
+
+        # 认领后的密码真的能登录
+        r = client.post("/api/auth/login", json={"username": name, "password": "ClaimPass123"})
+        assert r.status_code == 200
+
+    def test_claim_rejects_duplicate_username(self, client, unique_name):
+        from tests.conftest import register
+
+        taken = register(client, unique_name("tk"))
+        actor, _ = _make_guest(client)
+        r = actor.post(
+            "/api/auth/claim",
+            json={"username": taken.username, "password": "ClaimPass123"},
+        )
+        assert r.status_code == 409
+
+    def test_claim_rejects_weak_password(self, client, unique_name):
+        actor, _ = _make_guest(client)
+        r = actor.post(
+            "/api/auth/claim",
+            json={"username": unique_name("wk"), "password": "123"},
+        )
+        assert r.status_code == 400
+
+    def test_normal_user_cannot_claim(self, client, unique_name):
+        from tests.conftest import register
+
+        actor = register(client, unique_name("nc"))
+        r = actor.post(
+            "/api/auth/claim",
+            json={"username": unique_name("nc2"), "password": "ClaimPass123"},
+        )
+        assert r.status_code == 400
+        assert "不是访客" in r.json()["detail"]

@@ -240,6 +240,61 @@ async def create_guest(
     }
 
 
+class ClaimPayload(BaseModel):
+    username: str = Field(..., min_length=3, max_length=32)
+    password: str = Field(..., max_length=128)
+    nickname: str = Field("", max_length=64)
+
+
+@router.post("/claim")
+async def claim_guest(
+    payload: ClaimPayload,
+    response: Response,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """把当前访客账号「认领」成正式账号 —— **数据原地继承，不搬家**。
+
+    【为什么是原地认领，而不是「新建账号 + 迁移数据」】
+
+    迁移意味着要处理几十张表的外键、事务要么全成要么全败、中途失败还会
+    留下两份半成品数据。而访客账号本来就是一条正常的 `user` 记录，
+    它的辩论、观察、复盘全都挂在这个 id 上 —— **只要把 id 上的
+    用户名密码补齐、把 is_guest 清掉，一切就绪**。
+
+    这也正是「访客 = 临时用户」这个设计最大的好处：**转化路径上没有数据搬迁**。
+
+    【为什么要在认领时重新签发令牌】
+
+    JWT 里带着 username。改名之后旧令牌里的 username 就过期了，
+    不重签会出现「令牌里的用户名和库里不一致」的隐性不一致。
+    """
+    if not user.is_guest:
+        raise HTTPException(status_code=400, detail="当前账号不是访客账号，无需认领")
+
+    username = payload.username.strip()
+    if (error := validate_username(username)) is not None:
+        raise HTTPException(status_code=400, detail=error)
+    if (error := validate_password_strength(payload.password)) is not None:
+        raise HTTPException(status_code=400, detail=error)
+
+    existing = await session.scalar(select(User).where(User.username == username))
+    if existing is not None:
+        raise HTTPException(status_code=409, detail="用户名已被占用")
+
+    user.username = username
+    user.password_hash = hash_password(payload.password)
+    user.nickname = payload.nickname.strip() or username
+    user.is_guest = False
+    await session.commit()
+    await session.refresh(user)
+
+    token = create_access_token(user.id, user.username)
+    set_auth_cookie(response, token)
+
+    return {"user": _user_dict(user), "token": token}
+
+
 @router.post("/login")
 async def login(
     payload: LoginPayload,

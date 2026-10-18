@@ -39,6 +39,7 @@ from app.models import (
 from app.services import debate as debate_service
 from app.services import metrics as metrics_service
 from app.services import push as push_service
+from app.services.guest import enforce_guest_debate_quota
 from app.services.ratelimit import ai_limiter, debate_limiter, enforce
 from app.services.serializers import (
     debate_room_out,
@@ -203,6 +204,10 @@ async def create_debate(
     session: AsyncSession = Depends(get_session),
 ):
     enforce(ai_limiter, f"debate-create:{user.id}", settings.AI_RATE_PER_MIN, "操作过于频繁")
+
+    # 访客成本上限（阶段 2b）：非访客立即返回，零开销。
+    # 放在真正调用 AI **之前** —— 限额的意义就是在花钱前拦住。
+    await enforce_guest_debate_quota(session, user, request)
 
     profile = await ensure_profile(session, user)
 
