@@ -30,7 +30,11 @@ import {
   type ReviewCardFull,
 } from '@/features/debate/api';
 import { useDebateStream, type RoundDoneInfo } from '@/features/debate/useDebateStream';
+import { ClaimSheet } from '@/features/guest/ClaimSheet';
+import { GuestBanner } from '@/features/guest/GuestBanner';
+import { GuestSaveCard } from '@/features/guest/GuestSaveCard';
 import { usePushNotifications } from '@/features/push/usePushNotifications';
+import { isGuest } from '@/lib/roles';
 import { useAuthStore } from '@/store/auth';
 
 /**
@@ -57,13 +61,23 @@ export default function DebateRoomPage() {
   const navigate = useNavigate();
   const roomId = Number(params.id);
   const validRoomId = Number.isInteger(roomId) && roomId > 0;
-  const currentUserId = useAuthStore((state) => state.user?.id ?? null);
+  const currentUser = useAuthStore((state) => state.user);
+  const currentUserId = currentUser?.id ?? null;
+  /** 访客：只有辩论房可用，且复盘下方要出现「保存这条观察」 */
+  const guest = isGuest(currentUser);
+  /** 返回按钮的去处：访客没有辩论列表，回开辩页 */
+  const backTo = guest ? '/start' : '/debates';
 
   const [room, setRoom] = useState<DebateRoom | null>(null);
   const [messages, setMessages] = useState<DebateMessage[]>([]);
   const [review, setReview] = useState<ReviewCardFull | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
+
+  /** 认领弹窗（访客把这场观察保存成正式账号） */
+  const [claimOpen, setClaimOpen] = useState(false);
+  /** 「先不保存」只是把那张卡藏起来，顶部访客条仍然留着入口 */
+  const [saveCardDismissed, setSaveCardDismissed] = useState(false);
 
   const [draft, setDraft] = useState('');
   const [sending, setSending] = useState(false);
@@ -169,6 +183,7 @@ export default function DebateRoomPage() {
     setRoom(null);
     setMessages([]);
     setReview(null);
+    setSaveCardDismissed(false);
     pinnedRef.current = true;
 
     void (async () => {
@@ -201,8 +216,9 @@ export default function DebateRoomPage() {
 
   /* ------------------------------------------------- 读取已有的预约提醒 */
   // 独立于上面那次详情加载：提醒读失败不该影响房间本身（SSE / 消息逻辑完全不碰）
+  // 访客直接跳过：他没有推送设备，读了也永远是 null，白白多一次请求
   useEffect(() => {
-    if (!validRoomId) return;
+    if (!validRoomId || guest) return;
 
     let cancelled = false;
     setReminder(null);
@@ -221,7 +237,7 @@ export default function DebateRoomPage() {
     return () => {
       cancelled = true;
     };
-  }, [roomId, validRoomId]);
+  }, [roomId, validRoomId, guest]);
 
   /* ------------------------------------------------------------------ 操作 */
 
@@ -464,7 +480,7 @@ export default function DebateRoomPage() {
 
   if (loading) {
     return (
-      <RoomShell onBack={() => navigate('/debates')}>
+      <RoomShell onBack={() => navigate(backTo)} backLabel={guest ? '回到开辩' : undefined}>
         <RoomSkeleton />
       </RoomShell>
     );
@@ -472,11 +488,11 @@ export default function DebateRoomPage() {
 
   if (loadError || !room) {
     return (
-      <RoomShell onBack={() => navigate('/debates')}>
+      <RoomShell onBack={() => navigate(backTo)} backLabel={guest ? '回到开辩' : undefined}>
         <div className="rounded-2xl border border-light bg-surface p-6 text-center shadow-card">
           <p className="text-[13px] text-secondary">{loadError ?? '辩论房不存在'}</p>
-          <Button variant="outline" className="mt-4" onClick={() => navigate('/debates')}>
-            回到辩论列表
+          <Button variant="outline" className="mt-4" onClick={() => navigate(backTo)}>
+            {guest ? '回到开辩' : '回到辩论列表'}
           </Button>
         </div>
       </RoomShell>
@@ -486,9 +502,19 @@ export default function DebateRoomPage() {
   return (
     <div className="min-h-screen bg-base">
       <div className="mx-auto flex min-h-screen w-full max-w-2xl flex-col">
-        <RoomHeader room={room} onBack={() => navigate('/debates')} />
+        <RoomHeader
+          room={room}
+          onBack={() => navigate(backTo)}
+          backLabel={guest ? '回到开辩' : undefined}
+        />
 
         <main className="flex-1 px-4 pb-6 pt-4">
+          {guest ? (
+            <div className="mb-3">
+              <GuestBanner onSave={() => setClaimOpen(true)} />
+            </div>
+          ) : null}
+
           <RoomActions
             room={room}
             togglingPause={togglingPause}
@@ -496,6 +522,9 @@ export default function DebateRoomPage() {
             finishing={finishing}
             showOwnerActions={room.is_owner}
             hasReminder={reminder !== null}
+            // 访客没有好友关系，也约不上提醒（见 RoomActions 里的说明）
+            canInvite={!guest}
+            canRemind={!guest}
             onTogglePause={() => void handleTogglePause()}
             onInvite={() => void handleInvite()}
             onFinish={() => void handleFinish()}
@@ -574,6 +603,20 @@ export default function DebateRoomPage() {
             </div>
           ) : null}
 
+          {/*
+            访客的转化点：只在**真的拿到复盘**之后出现。
+            在此之前提注册没有说服力 —— 他手上还没有任何值得保存的东西。
+            「先不保存」只是把这张卡藏起来，顶部访客条仍然留着入口。
+          */}
+          {guest && review && !saveCardDismissed ? (
+            <div className="mt-3">
+              <GuestSaveCard
+                onSave={() => setClaimOpen(true)}
+                onLater={() => setSaveCardDismissed(true)}
+              />
+            </div>
+          ) : null}
+
           {/* 「还没有复盘卡片」不再在这里写一句话指向上方的按钮——
               那句话指向的按钮在消息列表顶部，辩到第 8 轮时已经在好几屏之外。
               现在由 DebateComposer 的 noticeAction 就地给出可点的按钮。 */}
@@ -635,12 +678,28 @@ export default function DebateRoomPage() {
         onCancelReminder={() => void handleCancelReminder()}
         onClose={() => setReminderOpen(false)}
       />
+
+      {/*
+        认领弹窗挂在房间页而不是 GuestSaveCard 里面：
+        顶部条和复盘下的卡片是**两个入口**，弹窗只有一份状态。
+        放在这里，两处都只是 setClaimOpen(true)。
+      */}
+      <ClaimSheet open={claimOpen} onClose={() => setClaimOpen(false)} />
     </div>
   );
 }
 
 /** 加载 / 出错时也保持房间的框架（顶栏 + 暖灰底），避免白屏闪烁 */
-function RoomShell({ children, onBack }: { children: ReactNode; onBack: () => void }) {
+function RoomShell({
+  children,
+  onBack,
+  backLabel = '返回辩论列表',
+}: {
+  children: ReactNode;
+  onBack: () => void;
+  /** 访客没有辩论列表，按钮文案要跟着变 */
+  backLabel?: string;
+}) {
   return (
     <div className="min-h-screen bg-base">
       <div className="mx-auto w-full max-w-2xl px-4 pb-6 pt-3">
@@ -649,7 +708,7 @@ function RoomShell({ children, onBack }: { children: ReactNode; onBack: () => vo
           onClick={onBack}
           className="mb-4 flex h-11 items-center rounded-xl px-2 text-[13px] text-secondary hover:bg-elevated"
         >
-          返回辩论列表
+          {backLabel}
         </button>
         {children}
       </div>

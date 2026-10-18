@@ -79,6 +79,14 @@ export interface User {
   nickname: string;
   /** 本人是不是管理员。服务端在 login / register / me 里返回（见 serializers.user_out）。 */
   is_admin: boolean;
+  /**
+   * 本人是不是**访客账号**（`POST /api/auth/guest` 创建的临时用户）。
+   *
+   * 访客是一个「已登录但还没认领」的真实 user 记录，所以会话状态仍是
+   * `authenticated` —— 区分「访客」和「正式账号」只看这一个字段。
+   * 判定统一走 `lib/roles.ts::isGuest()`，不要在页面里散着读 `user.is_guest`。
+   */
+  is_guest: boolean;
   created_at: string;
 }
 
@@ -293,6 +301,38 @@ export interface RegisterResponse {
 /** GET /api/auth/me → `{ user }`（不是裸 User） */
 export interface AuthMeResponse {
   user: User;
+}
+
+/**
+ * POST /api/auth/guest → `{ user, token, is_guest: true }`
+ *
+ * 访客账号是**真实的 user 记录**（`User.is_guest = true`），所以照样发 `token`，
+ * 和 register / login 一样要把它存成 Bearer 兜底令牌（见 `api/token.ts`）。
+ */
+export interface GuestAuthResponse {
+  user: User;
+  token: string;
+  is_guest: boolean;
+}
+
+/**
+ * POST /api/auth/claim 的请求体。
+ *
+ * 「认领」= 把当前访客账号**原地**变成正式账号：补用户名 / 密码 / 昵称，
+ * `is_guest` 置 false。数据不搬迁 —— 辩论、观察、复盘本来就挂在这个 id 上，
+ * 所以体验完再注册不会丢失刚才那份观察。
+ */
+export interface ClaimPayload {
+  username: string;
+  password: string;
+  /** 选填；留空时后端用用户名兜底 */
+  nickname: string;
+}
+
+/** POST /api/auth/claim → `{ user, token }`（令牌会重签，因为 JWT 里带 username） */
+export interface ClaimResponse {
+  user: User;
+  token: string;
 }
 
 /** GET /api/auth/invite → `{ code, link, used_count }` */

@@ -13,6 +13,22 @@ interface RoomActionsProps {
   showOwnerActions: boolean;
   /** 是否已经约了提醒（按钮文案用） */
   hasReminder: boolean;
+  /**
+   * 能不能邀请别人（默认可以）。
+   *
+   * 访客不能：他没有好友关系，也没有正式的历史弱点可以分享，
+   * 而且「邀请」会把人拉进一个**别人也在看**的房间 ——
+   * 访客模式下这个房间是「只有你」的，第一场就多人会破坏这个承诺。
+   */
+  canInvite?: boolean;
+  /**
+   * 能不能约辩论提醒（默认可以）。
+   *
+   * 访客不能：提醒靠 Web Push，而访客大概率没开过通知权限；
+   * 更要紧的是——**访客账号可能 7 天后就被清理**，
+   * 给他约一个「明天提醒你」却收不到，是在骗他。
+   */
+  canRemind?: boolean;
   onTogglePause: () => void;
   onInvite: () => void;
   onFinish: () => void;
@@ -31,6 +47,8 @@ export function RoomActions({
   finishing,
   showOwnerActions,
   hasReminder,
+  canInvite = true,
+  canRemind = true,
   onTogglePause,
   onInvite,
   onFinish,
@@ -53,13 +71,13 @@ export function RoomActions({
       ) : null}
 
       {/* 预约提醒：方案 3.9 里唯一的主动触达入口，只在这里出现 */}
-      {!finished ? (
+      {!finished && canRemind ? (
         <Button variant="outline" disabled={finishing || togglingPause} onClick={onRemind}>
           {hasReminder ? '已约提醒' : '提醒我'}
         </Button>
       ) : null}
 
-      {showOwnerActions && !finished ? (
+      {showOwnerActions && !finished && canInvite ? (
         <Button variant="outline" loading={inviting} disabled={finishing} onClick={onInvite}>
           邀请
         </Button>

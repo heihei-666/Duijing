@@ -124,6 +124,9 @@ export function AdminUsersSection() {
               <div className="min-w-0 flex-1">
                 <p className="truncate text-[13px] text-primary">
                   {item.nickname}
+                  {item.is_guest ? (
+                    <span className="ml-1 text-xs text-tertiary">访客</span>
+                  ) : null}
                   {item.is_admin ? <span className="ml-1 text-xs text-tertiary">管理员</span> : null}
                   {isSelf ? <span className="ml-1 text-xs text-tertiary">你</span> : null}
                 </p>

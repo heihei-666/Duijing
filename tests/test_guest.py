@@ -151,10 +151,25 @@ class TestGuestCostQuota:
         """全站预算打满时，即使这个访客自己还没用完也要拦 —— 这是防换 IP 的兜底。"""
         from app.config import settings as s
 
-        monkeypatch.setattr(s, "GUEST_DAILY_BUDGET", 0)
+        # 先建好访客、再改预算：预算为 0 时**连访客都建不出来**（见下一条用例），
+        # 所以顺序反过来的话这里验的就不是「发起辩论被拦」而是「建账号被拦」。
         actor, _ = _make_guest(client)
+        monkeypatch.setattr(s, "GUEST_DAILY_BUDGET", 0)
         r = self._new_debate(actor, 1)
         assert r.status_code == 429, f"全站预算为 0 时应拦截: {r.text}"
+        assert "已满" in r.json()["detail"]
+
+    def test_global_budget_blocks_guest_creation(self, client, monkeypatch):
+        """全站预算打满时**连访客账号都不再创建**。
+
+        只在发起辩论那一步拦的话，用户会先拿到账号、走到开辩页、
+        点了开始才撞墙；在门口拦下他，落地页就能当场显示「今日试用人次已满」。
+        """
+        from app.config import settings as s
+
+        monkeypatch.setattr(s, "GUEST_DAILY_BUDGET", 0)
+        r = client.post("/api/auth/guest")
+        assert r.status_code == 429, f"预算为 0 时不应再建访客: {r.text}"
         assert "已满" in r.json()["detail"]
 
     def test_normal_user_has_no_quota(self, client, unique_name, monkeypatch):
@@ -169,6 +184,65 @@ class TestGuestCostQuota:
 
 class TestClaimGuest:
     """认领：访客变正式账号，**数据原地继承，不搬家**。"""
+
+    def test_guest_full_flow_then_claim(self, client, unique_name):
+        """把访客模式的**验收标准**逐字变成断言：
+
+          无痕窗口打开 → 无需登录完成一次微辩论 → 看到 AI 复盘卡 →
+          点保存 → 转成正式账号，并且那条观察一条不丢。
+
+        这条用例覆盖的是整条转化链路，而不是单点行为。它跑通才说明
+        「先体验后注册」这件事在后端是真的成立，不只是页面上写着。
+        """
+        actor, _ = _make_guest(client)
+
+        # ① 不登录也能开一场辩论
+        created = actor.post(
+            "/api/debates",
+            json={"topic": "该不该在会议上直接反驳领导", "stance": "该"},
+        )
+        assert created.status_code == 201, created.text
+        room_id = created.json()["room"]["id"]
+
+        # ② 辩两轮（一轮拿不到观察，观察者需要足够依据）
+        for text in (
+            "我认为该，因为不反驳就会被一直追问到底",
+            "而且上次我忍了一次，结果对方变本加厉",
+        ):
+            sent = actor.post(f"/api/debates/{room_id}/messages", json={"content": text})
+            assert sent.status_code == 201, sent.text
+
+        # ③ 结束并拿到复盘卡
+        finished = actor.post(f"/api/debates/{room_id}/finish")
+        assert finished.status_code == 200, finished.text
+        review = finished.json()["review"]
+        assert review is not None, "访客必须能拿到复盘卡，否则他没有东西可保存"
+        assert (review["good"]["content"] or review["notice"]["content"] or review["next_time"]["content"]), (
+            f"复盘卡不能是空的: {review}"
+        )
+        observations_before = actor.get("/api/observations").json()["observations"]
+
+        # ④ 点「保存」→ 认领成正式账号
+        name = unique_name("flow")
+        claimed = actor.post(
+            "/api/auth/claim",
+            json={"username": name, "password": "ClaimPass123", "nickname": ""},
+        )
+        assert claimed.status_code == 200, claimed.text
+        assert claimed.json()["user"]["is_guest"] is False
+
+        # ⑤ 刚才那场辩论和那张复盘卡**一条不丢** —— 这是「原地认领」的核心承诺
+        detail = actor.get(f"/api/debates/{room_id}")
+        assert detail.status_code == 200
+        assert detail.json()["review"] is not None, "认领后复盘卡不能丢"
+
+        observations_after = actor.get("/api/observations").json()["observations"]
+        assert len(observations_after) == len(observations_before), "认领前后观察数量应一致"
+
+        # ⑥ 认领后就是正式账号：能登录，也能进只有正式账号能用的接口
+        relogin = client.post("/api/auth/login", json={"username": name, "password": "ClaimPass123"})
+        assert relogin.status_code == 200
+        assert actor.get("/api/weaknesses").status_code == 200
 
     def test_claim_converts_and_keeps_data(self, client, unique_name):
         actor, body = _make_guest(client)

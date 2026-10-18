@@ -6,6 +6,8 @@ import { BackIcon } from './icons';
 interface RoomHeaderProps {
   room: DebateRoom;
   onBack: () => void;
+  /** 返回按钮的读屏文案。访客没有「辩论列表」，回去的是开辩页 */
+  backLabel?: string;
 }
 
 /**
@@ -32,14 +34,14 @@ function roundLabel(room: DebateRoom): string {
  *   辩题栏 —— --text-primary 底 + 白字（配色方案 五）
  *   立场、轮次、人数 —— 中性色，不引入第三种彩色
  */
-export function RoomHeader({ room, onBack }: RoomHeaderProps) {
+export function RoomHeader({ room, onBack, backLabel = '返回辩论列表' }: RoomHeaderProps) {
   return (
     <header className="sticky top-0 z-20 border-b border-light bg-base px-4 pb-2.5 pt-3">
       <div className="flex items-start gap-1.5">
         <button
           type="button"
           onClick={onBack}
-          aria-label="返回辩论列表"
+          aria-label={backLabel}
           className="-ml-1 flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-secondary hover:bg-elevated"
         >
           <BackIcon width={22} height={22} />

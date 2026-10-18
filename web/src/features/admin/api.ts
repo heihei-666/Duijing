@@ -12,6 +12,11 @@ export interface AdminUser {
   username: string;
   nickname: string;
   is_admin: boolean;
+  /**
+   * 访客（`is_guest`）也在这张列表里 —— 它们是真 user 记录。
+   * 不标出来管理员会看到一堆 `guest_xxxx`，分不清哪些是待转化的访客。
+   */
+  is_guest: boolean;
   created_at: string;
   /** 非 null 表示本人提交过注销申请，管理员需要人工确认 */
   deletion_requested_at: string | null;
