@@ -5,6 +5,7 @@ import { BootSplash } from '@/components/common/BootSplash';
 import { AppShell } from '@/components/layout/AppShell';
 import { GuestOnly } from '@/components/routing/GuestOnly';
 import { RequireAuth } from '@/components/routing/RequireAuth';
+import { RootLayout } from '@/components/routing/RootLayout';
 import AssetsPage from '@/pages/AssetsPage';
 import DebateJoinPage from '@/pages/DebateJoinPage';
 import DebateRoomPage from '@/pages/DebateRoomPage';
@@ -45,6 +46,18 @@ export default function App() {
         <Route path="/join/:code" element={<JoinPage />} />
       </Route>
 
+      {/*
+        根路径 `/` 分两种人：
+          · 已登录 → AppShell + 首页
+          · 未登录 → 落地页（大标题 + Slogan + 体验入口 + 灰色登录链接）
+
+        只有 `/` 是例外 —— 其余受保护页面仍走 RequireAuth（没登录就别进）。
+        见 components/routing/RootLayout.tsx 里的说明。
+      */}
+      <Route element={<RootLayout />}>
+        <Route path="/" element={<HomePage />} />
+      </Route>
+
       <Route element={<RequireAuth />}>
         {/* 辩论邀请落地页：后端生成的链接是 /debate/join/{token}，
             没有这条路由邀请链接会直接 404（整条多人辩论链路是断的）。
@@ -55,7 +68,6 @@ export default function App() {
         <Route path="/debates/:id" element={<DebateRoomPage />} />
 
         <Route element={<AppShell />}>
-          <Route path="/" element={<HomePage />} />
           <Route path="/debates" element={<DebatesPage />} />
           <Route path="/weaknesses" element={<WeaknessesPage />} />
           <Route path="/weaknesses/:id" element={<WeaknessDetailPage />} />
