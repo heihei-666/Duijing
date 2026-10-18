@@ -187,13 +187,21 @@ export function AdvantageLibrary() {
             {confirmed.map((item) => (
               <li
                 key={item.id}
-                className="flex items-center gap-2 rounded-xl border border-light bg-surface px-4 py-3"
+                className="group flex items-center gap-2.5 rounded-xl border border-light bg-surface px-4 py-3"
               >
+                {/* 左侧小圆点：优势用 --success。它只是一个「这是一条已确认的东西」的锚点，
+                    不承担分类含义 —— 用颜色区分条目类型会是另一套语言，这轮不做。 */}
+                <span aria-hidden className="h-1.5 w-1.5 shrink-0 rounded-full bg-success" />
                 <p className="min-w-0 flex-1 text-[15px] leading-snug text-primary">{item.name}</p>
+                {/*
+                  归档：桌面上 hover 才出现（列表平时更干净）。
+                  但手机上没有 hover，所以只在 sm 断点以上才隐藏 ——
+                  否则触屏用户根本点不到归档。
+                */}
                 <Button
                   size="sm"
                   variant="ghost"
-                  className="min-h-[44px] shrink-0 text-tertiary"
+                  className="min-h-[44px] shrink-0 text-tertiary transition-opacity sm:opacity-0 sm:group-hover:opacity-100 sm:focus-visible:opacity-100"
                   loading={busyId === item.id}
                   disabled={busyId !== null}
                   onClick={() => void handleArchive(item)}
@@ -217,3 +225,5 @@ export function AdvantageLibrary() {
     </div>
   );
 }
+
+

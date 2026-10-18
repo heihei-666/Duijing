@@ -245,8 +245,16 @@ export function PrincipleLibrary() {
             ) : (
               <ul className="space-y-2.5">
                 {active.map((item) => (
-                  <li key={item.id} className="rounded-xl border border-light bg-surface px-4 py-3">
-                    <div className="flex items-start gap-2">
+                  <li
+                    key={item.id}
+                    className="group rounded-xl border border-light bg-surface px-4 py-3"
+                  >
+                    <div className="flex items-start gap-2.5">
+                      {/* 左侧小圆点：原则用 --primary（和优势的 --success 区分开颜色，不区分含义） */}
+                      <span
+                        aria-hidden
+                        className="mt-[7px] h-1.5 w-1.5 shrink-0 rounded-full bg-primary"
+                      />
                       <p className="min-w-0 flex-1 text-[15px] leading-snug text-primary">
                         {item.content}
                       </p>
@@ -274,10 +282,11 @@ export function PrincipleLibrary() {
                         <LinkIcon width={16} height={16} />
                         关联回环
                       </Button>
+                      {/* 归档：桌面上 hover 才出现；手机没有 hover，所以只在 sm 以上隐藏 */}
                       <Button
                         size="sm"
                         variant="ghost"
-                        className="min-h-[44px] text-tertiary"
+                        className="min-h-[44px] text-tertiary transition-opacity sm:opacity-0 sm:group-hover:opacity-100 sm:focus-visible:opacity-100"
                         loading={busyId === item.id}
                         disabled={busyId !== null}
                         onClick={() => void handleArchive(item)}
@@ -334,3 +343,5 @@ function PrincipleMeta({ item }: { item: PrincipleData }) {
     </div>
   );
 }
+
+

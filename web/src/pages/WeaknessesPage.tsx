@@ -199,10 +199,12 @@ export default function WeaknessesPage() {
         >
           + 记一笔
         </button>
+        {/* 垃圾桶不做等宽：它是低频的「去翻旧账」，和「+ 记一笔」平起平坐
+            会让主次颠倒。收成一个紧凑按钮，宽度只够放下图标和两个字。 */}
         <button
           type="button"
           onClick={() => setTrashOpen(true)}
-          className="flex h-11 flex-1 items-center justify-center gap-1.5 rounded-xl bg-elevated text-[13px] text-secondary transition-colors hover:bg-inset"
+          className="flex h-11 shrink-0 items-center justify-center gap-1.5 rounded-xl bg-elevated px-4 text-[13px] text-secondary transition-colors hover:bg-inset"
         >
           <TrashIcon width={16} height={16} />
           垃圾桶
@@ -309,3 +311,4 @@ function WeaknessSkeleton() {
     </div>
   );
 }
+
