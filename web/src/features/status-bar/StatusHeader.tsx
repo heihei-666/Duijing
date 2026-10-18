@@ -12,6 +12,25 @@ interface StatusHeaderProps {
 }
 
 /**
+ * 精力分档取色：<20 红、20–59 黄、≥60 绿。
+ *
+ * 【为什么可以分级了】（上一版我写的是「只画有多少、不画好不好」）
+ *
+ * 上一版我用主色画电池、不区分颜色，理由是「精力 30 被画成红色等于在说
+ * 你状态很差，而这个产品整天在避免评判用户」。
+ * 但用户要的是**可读性**：一条没有颜色的电池，半满和只剩一格看起来差不多，
+ * 反而更难判断。而且分级用的是「撑住率」那套色板（--rate-low/mid/good），
+ * 是**同一套语义**，不是新引入一套评判体系。
+ *
+ * 结果就是：红/黄/绿只表示「还剩多少」，不附加任何评价词。
+ */
+function energyBandClass(value: number): string {
+  if (value < 20) return 'bg-rate-low';
+  if (value < 60) return 'bg-rate-mid';
+  return 'bg-rate-good';
+}
+
+/**
  * 「精力」电池条。
  *
  * 【为什么不用一个数字】
@@ -20,24 +39,29 @@ interface StatusHeaderProps {
  * 而精力是这个产品里唯一一个**身体状态**指标，它应该被一眼看见，不该被读。
  * 电池条把「还剩多少」直接画出来：半满就是半满，不用想。
  *
- * 【为什么不做红黄绿分级】
+ * 【为什么填充一定要是背景色而不是边框色】
  *
- * 「精力 30」被画成红色，等于在说「你状态很差」。这个产品整天在避免评判用户，
- * 一个身体指标更不该打分。所以只用主色画「有多少」，不画「好不好」。
- * （连续天数的火苗色是唯一的例外，那是奖励不是评价。）
+ * 第一版我写的是 `bg-brand` —— 这个类**根本不存在**（`brand` 只定义在
+ * textColor 里，backgroundColor 里没有），于是填充元素有宽度但没有背景色，
+ * 电池看起来是空的。Tailwind 对不存在的类**不报错、不警告，静默失效**，
+ * 而 tsc 也查不出来（类名是字符串）。
+ * 现在用的三个 `bg-rate-*` 是确实定义过的（见 tailwind.config.js 的
+ * backgroundColor 段），不会再踩同一个坑。
  */
 function EnergyBattery({ value }: { value: number }) {
   const pct = Math.max(0, Math.min(100, value));
   return (
     <span aria-hidden className="flex items-center gap-[2px]">
-      <span className="relative flex h-[13px] w-[24px] items-center rounded-[3px] border border-strong p-[1.5px]">
-        <span
-          className="h-full rounded-[1px] bg-brand transition-[width] duration-300"
-          style={{ width: `${pct}%` }}
-        />
+      <span className="relative flex h-[15px] w-[28px] items-center rounded-[3px] border border-strong p-[2px]">
+        {pct > 0 ? (
+          <span
+            className={cn('h-full rounded-[1px] transition-[width] duration-300', energyBandClass(pct))}
+            style={{ width: `${pct}%` }}
+          />
+        ) : null}
       </span>
       {/* 电池正极的小凸头 */}
-      <span className="h-[6px] w-[2px] rounded-r-sm bg-strong" />
+      <span className="h-[7px] w-[2px] rounded-r-sm bg-strong" />
     </span>
   );
 }
