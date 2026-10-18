@@ -25,20 +25,40 @@ export default function RegisterPage() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   /**
-   * 是否是本实例的第一个用户。
+   * 实例的注册策略（`GET /api/auth/bootstrap`）。
+   *
    * null = 还没问出来，此时按「需要邀请码」保守处理（老行为）。
+   *
+   * 【为什么这里要读 open_register —— 一个真实存在的死锁】
+   *
+   * 之前这里只读了 `needs_first_user`，于是 `ALLOW_OPEN_REGISTER=true` 的部署里
+   * 前端**仍然硬性要求填邀请码**，而那种实例上根本没有人发码 ——
+   * 页面把用户挡在门外，后端的开放注册形同虚设。
+   * （这个 bug 是本地跑浏览器点注册时报「请填写邀请码」才发现的，
+   *   光看代码根本注意不到，因为后端那一侧是完全正确的。）
    */
-  const [isFirstUser, setIsFirstUser] = useState<boolean | null>(null);
+  const [policy, setPolicy] = useState<{ needsFirstUser: boolean; openRegister: boolean } | null>(
+    null,
+  );
+  const isFirstUser = policy?.needsFirstUser ?? false;
+  const needsInvite = policy !== null && !policy.needsFirstUser && !policy.openRegister;
 
   useEffect(() => {
     let cancelled = false;
-    apiRequest<{ needs_first_user: boolean }>('/auth/bootstrap', { redirectOn401: false })
+    apiRequest<{ needs_first_user: boolean; open_register?: boolean }>('/auth/bootstrap', {
+      redirectOn401: false,
+    })
       .then((data) => {
-        if (!cancelled) setIsFirstUser(Boolean(data.needs_first_user));
+        if (cancelled) return;
+        setPolicy({
+          needsFirstUser: Boolean(data.needs_first_user),
+          // 旧后端没有这个字段时按「需要邀请码」处理，保持老行为
+          openRegister: Boolean(data.open_register),
+        });
       })
       .catch(() => {
         // 问不到就按需要邀请码处理，不阻塞注册
-        if (!cancelled) setIsFirstUser(false);
+        if (!cancelled) setPolicy({ needsFirstUser: false, openRegister: false });
       });
     return () => {
       cancelled = true;
@@ -58,10 +78,8 @@ export default function RegisterPage() {
       setError(`密码至少 ${MIN_PASSWORD_LENGTH} 位`);
       return;
     }
-    // 第一个用户不需要邀请码——后端也是这么判的（is_first_user 短路校验）。
-    // 前端硬性要求填写，会让部署者第一次打开自己的站点时卡住：
-    // 他手上不可能有邀请码，因为能发码的人还没注册。
-    if (!isFirstUser && !trimmedInvite) {
+    // 三种情况不需要邀请码：第一个用户、实例开放注册、（策略还没问出来时按需要处理）
+    if (needsInvite && !trimmedInvite) {
       setError('请填写邀请码');
       return;
     }
@@ -74,7 +92,7 @@ export default function RegisterPage() {
         password,
         // 昵称选填：留空时用用户名兜底，保证契约字段一定有值
         nickname: nickname.trim() || trimmedUsername,
-        invite_code: isFirstUser ? '' : trimmedInvite,
+        invite_code: needsInvite ? trimmedInvite : '',
       });
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : '注册失败，请稍后再试');
@@ -86,9 +104,13 @@ export default function RegisterPage() {
     <AuthLayout
       title="注册"
       subtitle={
-        isFirstUser
-          ? '你是这个实例的第一个用户，直接注册即可，不需要邀请码。'
-          : '对镜目前是邀请制，需要一个邀请码。'
+        policy === null
+          ? '正在确认这个实例的注册方式…'
+          : isFirstUser
+            ? '你是这个实例的第一个用户，直接注册即可，不需要邀请码。'
+            : policy.openRegister
+              ? '这个实例开放注册，直接填用户名和密码即可。'
+              : '对镜目前是邀请制，需要一个邀请码。'
       }
       footer={
         <span className="text-secondary">
@@ -125,8 +147,8 @@ export default function RegisterPage() {
           value={password}
           onChange={(event) => setPassword(event.target.value)}
         />
-        {/* 第一个用户没有邀请码可填（能发码的人还没注册），直接不显示这个字段 */}
-        {isFirstUser ? null : (
+        {/* 不需要邀请码时（第一个用户 / 开放注册）不显示这个字段 */}
+        {needsInvite ? (
           <Field
             label="邀请码"
             name="invite_code"
@@ -138,7 +160,7 @@ export default function RegisterPage() {
             value={inviteCode}
             onChange={(event) => setInviteCode(event.target.value.toUpperCase())}
           />
-        )}
+        ) : null}
 
         {error ? <p className="text-xs text-danger">{error}</p> : null}
 

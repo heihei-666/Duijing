@@ -172,7 +172,10 @@ export default function HomePage() {
         error={observationError}
         onAccept={(id) => void handleObservation(id, 'accept')}
         onIgnore={(id) => void handleObservation(id, 'ignore')}
-        onQuickRecord={() => setQuickRecordOpen(true)}
+        // 全新用户**不给**这个按钮：上面已经有「记一笔」主按钮了，
+        // 同屏两个「记一笔」会让人不知道该点哪个（这是看真实截图才发现的，
+        // 光读代码看不出来）。空态退回纯解释文案。
+        onQuickRecord={isFreshStart ? undefined : () => setQuickRecordOpen(true)}
         spacious={isFreshStart}
       />
 
