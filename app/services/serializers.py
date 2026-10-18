@@ -40,6 +40,8 @@ def user_out(user: User) -> dict:
         "username": user.username,
         "nickname": user.nickname or user.username,
         "is_admin": user.is_admin,
+        # 前端靠它决定：要不要显示「保存并注册」引导、哪些页面加访客蒙层
+        "is_guest": user.is_guest,
         "created_at": iso_utc(user.created_at),
     }
 

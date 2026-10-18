@@ -162,6 +162,16 @@ class User(Base):
     nickname: Mapped[str] = mapped_column(String(64), default="", nullable=False)
     is_admin: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
+    # 访客（临时用户）。见 `api/auth.py::create_guest`。
+    #
+    # 为什么访客是一条真实的 user 记录，而不是把各表的 user_id 改成可空：
+    # 辩论、观察、复盘这些逻辑有 56 处依赖 `user.id`。改成可空就要在每一处
+    # 加判空分支，漏一处就是线上 500。建一条 is_guest=True 的用户记录，
+    # **现有逻辑一行都不用改** —— 它看到的就是一个普通用户。
+    #
+    # 注册时「认领」：补全用户名密码、清掉这个标记，数据原地继承，不搬家。
+    is_guest: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+
     # 邀请制注册
     invite_code: Mapped[str] = mapped_column(String(16), unique=True, index=True, nullable=False)
     invited_by: Mapped[int | None] = mapped_column(ForeignKey("user.id"), nullable=True)

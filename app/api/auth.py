@@ -11,6 +11,8 @@
 
 from __future__ import annotations
 
+import secrets
+
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
@@ -173,6 +175,68 @@ async def register(
         "token": token,
         "is_first_user": is_first_user,
         "invite_code": user.invite_code,
+    }
+
+
+@router.post("/guest", status_code=status.HTTP_201_CREATED)
+async def create_guest(
+    request: Request,
+    response: Response,
+    session: AsyncSession = Depends(get_session),
+):
+    """创建一个访客（临时用户），直接签发正常令牌。
+
+    【为什么是「临时用户」而不是「可空的 user_id」】
+
+    辩论、观察、复盘这些逻辑有 56 处依赖 `user.id`。把 user_id 改成可空，
+    就要在每一处加判空分支，**漏一处就是线上 500**，而且这类错误只在
+    访客路径上触发 —— 正常用户的测试永远发现不了。
+
+    建一条 `is_guest=True` 的真实用户记录，现有逻辑**一行都不用改**。
+    它看到的就是一个普通用户。
+
+    【为什么密码是随机的】
+
+    访客不需要能登录 —— 认领时会给它设上真实密码。
+    在那之前用一个谁也猜不到的随机串，保证这个账号无法被登录。
+
+    【为什么这里就要限流】
+
+    虽然建访客本身不花 AI 钱，但不限制的话可以被刷出大量临时账号，
+    把 7 天清理任务的负担和数据库撑大。AI 成本的上限在**发起辩论**那一步。
+    """
+    enforce(
+        login_limiter,
+        f"guest:{client_ip(request)}",
+        settings.GUEST_CREATE_PER_MIN,
+        "创建访客过于频繁，请稍后再试",
+    )
+
+    # token_urlsafe 含 - 和 _，去掉后只留字母数字，避免用户名里出现奇怪字符
+    suffix = secrets.token_urlsafe(16).replace("-", "").replace("_", "")[:16]
+    guest = User(
+        username=f"guest_{suffix}",
+        # 随机密码：这个账号在认领之前不可登录
+        password_hash=hash_password(secrets.token_urlsafe(32)),
+        nickname="访客",
+        is_admin=False,
+        is_guest=True,
+        invite_code=await _unique_invite_code(session),
+    )
+    session.add(guest)
+    await session.flush()
+
+    session.add(UserProfile(user_id=guest.id))
+    await session.commit()
+    await session.refresh(guest)
+
+    token = create_access_token(guest.id, guest.username)
+    set_auth_cookie(response, token)
+
+    return {
+        "user": _user_dict(guest),
+        "token": token,
+        "is_guest": True,
     }
 
 

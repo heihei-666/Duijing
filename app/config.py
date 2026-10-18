@@ -91,6 +91,20 @@ class Settings:
     # 所以默认值保持 lax，只在确实需要的部署里通过环境变量打开。
     COOKIE_SAMESITE: str = os.getenv("COOKIE_SAMESITE", "lax").strip().lower()
 
+    # ── 访客模式 ──────────────────────────────────────────
+    # 匿名接口会**真实消耗 AI 额度**，所以三道上限缺一不可：
+    #   1. 建访客频率（防一次性刷出海量临时账号）
+    #   2. 单人每天可发起的辩论次数（按 IP 和访客 ID **各算一次**，取更严的）
+    #   3. 全站每天访客辩论总次数（防换 IP 绕过单人限制）
+    #
+    # 达到全站上限后返回明确文案，转化为「注册后继续」——
+    # **限额本身也是转化点**，不该只在后台默默降级。
+    GUEST_CREATE_PER_MIN: int = _int("GUEST_CREATE_PER_MIN", 6)
+    GUEST_DEBATES_PER_DAY: int = _int("GUEST_DEBATES_PER_DAY", 2)
+    GUEST_DAILY_BUDGET: int = _int("GUEST_DAILY_BUDGET", 100)
+    # 未认领的访客数据保留天数（由定时任务物理删除）
+    GUEST_RETENTION_DAYS: int = _int("GUEST_RETENTION_DAYS", 7)
+
     # ── 注册 ──────────────────────────────────────────────
     # 为空表示不启用固定邀请码，仅用库内邀请码
     BOOTSTRAP_INVITE_CODE: str = os.getenv("BOOTSTRAP_INVITE_CODE", "").strip().upper()
