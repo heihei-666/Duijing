@@ -49,6 +49,25 @@ HOST=你的服务器IP USER_=root SKIP_BUILD=1 bash deploy/push.sh   # 只更新
 HOST=你的服务器IP USER_=root bash deploy/push.sh                # 前后端一起更新
 ```
 
+> #### ⚠️ 日常更新**不要**传 `DOMAIN`
+>
+> `push.sh` 会把 `DOMAIN` 透传给 `server-setup.sh`，而那里用「有没有证书」
+> 决定 Nginx 配置写哪一份。日常更新**不传** `DOMAIN` 才是对的 ——
+> 只要现有配置里已经有 443 server 块，脚本就**保留不动**
+> （见脚本里的 `EXISTING_HTTPS` 判断）。
+>
+> **线上真实事故（2026-10-18）**：手工部署时 `DOMAIN` 传成了 `www.duijing.xyz`，
+> 而证书目录叫 `duijing.xyz` → 脚本以为「没证书」→ 把 Nginx 换成 HTTP-only →
+> 443 没人监听 → **Cloudflare Tunnel 指向的 https://localhost:443 当场全挂**。
+> 更糟的是脚本仍然打印「服务器初始化完成」，从输出上看不出任何异常。
+>
+> 现在有两道防线：① 脚本开头把 `DOMAIN` 的 `www.` 前缀剥掉；
+> ② 已有 443 配置时绝不降级（只警告，不重写）。
+> 真要重新生成 Nginx 配置，先 `rm /etc/nginx/sites-available/duijing` 再跑脚本。
+>
+> 应急恢复：`/etc/nginx/sites-available/` 下留有历史配置（如 `duijing.bak.*`），
+> 拷回 `duijing` 后 `nginx -t && systemctl reload nginx` 即可。
+
 ---
 
 ## 1. 系统准备
