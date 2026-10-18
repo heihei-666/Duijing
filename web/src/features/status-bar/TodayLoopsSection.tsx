@@ -35,7 +35,8 @@ export function TodayLoopsSection({
 }: TodayLoopsSectionProps) {
   return (
     <section className="rounded-2xl border border-light bg-surface shadow-card">
-      <h2 className="px-4 pt-4 text-xs text-secondary">今天练什么</h2>
+      {/* 新用户态不显示标题：卡片内容（即兴辩论）已经自解释，「今天练什么」 反而像在暗示下面有数据 */}
+      {loops.length > 0 ? <h2 className="px-4 pt-4 text-xs text-secondary">今天练什么</h2> : null}
 
       {loops.length === 0 ? (
         <div className={cn('px-4 text-center', spacious ? 'pb-9 pt-6' : 'pb-4 pt-1')}>
@@ -47,12 +48,13 @@ export function TodayLoopsSection({
           </p>
           {onQuickDebate ? (
             <Button size="lg" className={spacious ? 'mt-5' : 'mt-3'} onClick={onQuickDebate}>
-              开始
+              选立场开辩
             </Button>
           ) : null}
         </div>
       ) : (
-        <ul className="mt-1 divide-y divide-light">
+        <>
+          <ul className="mt-1 divide-y divide-light">
           {loops.map((loop) => {
             // 还没有触发记录（null）时显示 --，不能画成 0%（那是「每次都破功」）
             const empty = ratePercent(loop.hold_rate_30d) === null;
@@ -87,8 +89,29 @@ export function TodayLoopsSection({
               </li>
             );
           })}
-        </ul>
+          </ul>
+
+          {/*
+            老用户的「3 分钟辩论」入口。
+            上一版这里没有，辩论入口在页面最底部的全宽按钮「和 AI 辩一轮」——
+            用户的原话是「功能重叠和视觉打架」。合并之后：回环仍然优先展示
+            （那是用户自己攒的、更值得看），辩论作为同一张卡里的次要动作留着，
+            不给主按钮，避免和「记一笔」抢视觉焦点。
+          */}
+          {onQuickDebate ? (
+            <div className="border-t border-light px-4 py-2.5">
+              <button
+                type="button"
+                onClick={onQuickDebate}
+                className="text-[13px] text-brand transition-colors hover:text-brand-hover"
+              >
+                或者来一次 3 分钟即兴辩论 →
+              </button>
+            </div>
+          ) : null}
+        </>
       )}
     </section>
   );
 }
+

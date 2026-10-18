@@ -95,3 +95,13 @@ export function CloseIcon(props: IconProps) {
     </svg>
   );
 }
+
+/** 锁定（新用户还没解锁的入口） */
+export function LockIcon(props: IconProps) {
+  return (
+    <svg {...baseProps} width={14} height={14} {...props}>
+      <rect x="4.5" y="10.5" width="15" height="9.5" rx="2" />
+      <path d="M8 10.5V7.8a4 4 0 0 1 8 0v2.7" />
+    </svg>
+  );
+}

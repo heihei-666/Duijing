@@ -1,5 +1,6 @@
 import { Outlet, useLocation } from 'react-router-dom';
 
+import { LockedFeatureSheet } from '@/components/layout/LockedFeatureSheet';
 import { SideNav } from '@/components/layout/SideNav';
 import { TabBar } from '@/components/layout/TabBar';
 import { cn } from '@/lib/cn';
@@ -51,6 +52,9 @@ export function AppShell() {
       </div>
 
       <TabBar />
+
+      {/* 新用户点被锁的入口时的说明弹层（挂在这里，导航两处共用一个） */}
+      <LockedFeatureSheet />
     </div>
   );
 }
