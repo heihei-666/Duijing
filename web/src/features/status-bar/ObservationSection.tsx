@@ -46,15 +46,31 @@ export function ObservationSection({
 
       {observations.length === 0 ? (
         <div className={cn('text-center', spacious ? 'pt-4' : 'pt-2')}>
-          <p className="text-[15px] leading-relaxed text-primary">
-            记录一个你今天不爽的瞬间，AI 帮你看看盲区。
-          </p>
+          {/*
+            有「记一笔」按钮时，这句是它的说服文案；
+            **没有按钮时不要再说一遍** —— 首页最上面那张卡已经把
+            「今天有什么让你不爽的瞬间？记一笔，AI 帮你看看盲区」说完了，
+            同一屏说两遍几乎一样的话，只会让人以为这里是另一个入口。
+            （这个重复是看真实截图才发现的，光读代码看不出来。）
+          */}
           {onQuickRecord ? (
-            <Button variant="outline" size="lg" className={spacious ? 'mt-5' : 'mt-3'} onClick={onQuickRecord}>
-              记一笔
-            </Button>
+            <>
+              <p className="text-[15px] leading-relaxed text-primary">
+                记录一个你今天不爽的瞬间，AI 帮你看看盲区。
+              </p>
+              <Button
+                variant="outline"
+                size="lg"
+                className={spacious ? 'mt-5' : 'mt-3'}
+                onClick={onQuickRecord}
+              >
+                记一笔
+              </Button>
+            </>
           ) : (
-            <p className="mt-1.5 text-xs text-tertiary">辩一轮，或记几笔事件卡，观察会出现在这里。</p>
+            <p className="text-[13px] leading-relaxed text-secondary">
+              辩一轮，或记几笔事件卡，观察会出现在这里。
+            </p>
           )}
         </div>
       ) : (

@@ -27,7 +27,7 @@ export const GUEST_COPY = {
 
   /** 开辩页 */
   startTitle: '想辩点什么？',
-  startLead: '选一个，或者写一件刚发生的事。AI 只当对手，观察留到最后才给。',
+  startLead: '选一个，或者写一件刚发生的事。它是陪练不是考官，不会把你问住；观察留到最后才给。',
   startSceneLabel: '记下一件让你不爽的事',
   startScenePlaceholder: '例如：周会上领导追问进度，我手上还没结论，当场有点僵',
   startSceneCta: '拿这件事开辩',

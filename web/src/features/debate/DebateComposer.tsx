@@ -184,7 +184,28 @@ export function DebateComposer({
         )}
       />
 
-      <div className="mt-1.5 flex items-center justify-end">
+      {/*
+        字数 + 台阶按钮同一行。
+        台阶原来放在底部操作行里，和「这轮我放弃」挤在一起 ——
+        390px 宽时两者会换行（实测「我卡住了，给我提示」独占一行，
+        把「发送」挤到两行中间，整个输入区凭空高了 50px）。
+        挪到计数行更合语义：它是「帮你写」的辅助，不是「结束这一轮」的操作。
+      */}
+      <div className="mt-1.5 flex items-center justify-between gap-2">
+        {finished || paused ? (
+          <span />
+        ) : (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="-ml-2"
+            disabled={streaming}
+            loading={hintLoading}
+            onClick={onHint}
+          >
+            我卡住了，给我提示
+          </Button>
+        )}
         <span className={cn('text-[11px] tabular-nums', overLimit ? 'text-danger' : 'text-tertiary')}>
           {count} / {DEBATE_MESSAGE_MAX_CHARS}
         </span>
@@ -215,29 +236,15 @@ export function DebateComposer({
             </Button>
           </span>
         ) : (
-          <span className="flex min-w-0 flex-wrap items-center gap-1.5">
-            {/*
-              台阶按钮放在「这轮我放弃」**前面**，且用中性色：
-              放弃和求助是两种完全不同的信号，要让用户分得清 ——
-              以前只有「放弃」，而放弃意味着「这一轮我认输」。
-              给一个「我卡住了」的出口，才是把「被审问」变成「被接住」。
-            */}
-            <Button
-              variant="ghost"
-              disabled={paused || streaming}
-              loading={hintLoading}
-              onClick={onHint}
-            >
-              我卡住了，给我提示
-            </Button>
-            <Button
-              variant="ghost"
-              disabled={paused || sending || streaming}
-              onClick={() => setConfirmAbandon(true)}
-            >
-              这轮我放弃
-            </Button>
-          </span>
+          // 这一行只留「放弃」：台阶已经上移到计数行（见上面的说明）。
+          // 两个文字操作挤在一行会在 390px 换行，把「发送」挤成两行之间的孤儿。
+          <Button
+            variant="ghost"
+            disabled={paused || sending || streaming}
+            onClick={() => setConfirmAbandon(true)}
+          >
+            这轮我放弃
+          </Button>
         )}
 
         <Button className="min-w-[96px]" disabled={!canSend} loading={sending} onClick={onSend}>
