@@ -136,10 +136,13 @@ export default {
         ],
       },
       boxShadow: {
-        card: '0 1px 2px 0 rgba(44, 42, 38, 0.04)',
-        sheet: '0 -8px 24px rgba(44, 42, 38, 0.10)',
+        // 全部走 tokens 里的 CSS 变量 —— 阴影必须能跟着主题翻。
+        // 亮色是暖灰低透明度，暗色是更黑更大的扩散（照搬会几乎看不见）。
+        card: 'var(--shadow-card)',
+        'card-hover': 'var(--shadow-card-hover)',
+        sheet: 'var(--shadow-sheet)',
         // 居中弹窗用。sheet 是**向上**投影的，用在居中弹窗上方向就反了。
-        modal: '0 8px 32px rgba(44, 42, 38, 0.16)',
+        modal: 'var(--shadow-modal)',
       },
       keyframes: {
         'fade-in': {
@@ -159,3 +162,4 @@ export default {
   },
   plugins: [],
 };
+

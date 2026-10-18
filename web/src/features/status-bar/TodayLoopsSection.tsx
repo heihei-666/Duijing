@@ -36,10 +36,10 @@ export function TodayLoopsSection({
   return (
     <section className="rounded-2xl border border-light bg-surface shadow-card">
       {/* 新用户态不显示标题：卡片内容（即兴辩论）已经自解释，「今天练什么」 反而像在暗示下面有数据 */}
-      {loops.length > 0 ? <h2 className="px-4 pt-4 text-xs text-secondary">今天练什么</h2> : null}
+      {loops.length > 0 ? <h2 className="px-5 pt-5 text-xs text-secondary">今天练什么</h2> : null}
 
       {loops.length === 0 ? (
-        <div className={cn('px-4 text-center', spacious ? 'pb-9 pt-6' : 'pb-4 pt-1')}>
+        <div className={cn('px-5 text-center', spacious ? 'pb-9 pt-7' : 'pb-5 pt-2')}>
           <p className="text-[15px] leading-relaxed text-primary">
             想不想来一次 3 分钟的即兴辩论？
           </p>
@@ -63,7 +63,7 @@ export function TodayLoopsSection({
                 <button
                   type="button"
                   onClick={() => onSelect(loop)}
-                  className="w-full px-4 py-3 text-left transition-colors hover:bg-elevated"
+                  className="w-full px-5 py-3.5 text-left transition-colors hover:bg-elevated"
                 >
                   <div className="flex items-center gap-2">
                     <span className="min-w-0 flex-1 truncate text-[15px] text-primary">
@@ -99,7 +99,7 @@ export function TodayLoopsSection({
             不给主按钮，避免和「记一笔」抢视觉焦点。
           */}
           {onQuickDebate ? (
-            <div className="border-t border-light px-4 py-2.5">
+            <div className="border-t border-light px-5 py-3">
               <button
                 type="button"
                 onClick={onQuickDebate}
@@ -114,4 +114,5 @@ export function TodayLoopsSection({
     </section>
   );
 }
+
 

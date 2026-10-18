@@ -42,7 +42,7 @@ export function PastYouSection({ data }: PastYouSectionProps) {
   return (
     <section
       aria-label="过去的你"
-      className="rounded-2xl border border-light bg-surface px-4 py-4"
+      className="rounded-2xl border border-light bg-surface p-5 shadow-card"
     >
       <p className="text-[11px] text-tertiary">过去的你</p>
 
@@ -72,3 +72,4 @@ export function PastYouSection({ data }: PastYouSectionProps) {
     </section>
   );
 }
+

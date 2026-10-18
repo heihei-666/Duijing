@@ -22,6 +22,10 @@ interface WeaknessNoteProps {
  */
 export function WeaknessNote({ card, onOpen, onAction, highlighted = false }: WeaknessNoteProps) {
   const tone = STICKY_TONES[card.status];
+  // 同一张便签每次都歪同一个角度（按 id 取模），相邻几张角度不同 ——
+  // 整墙齐刷刷 -1.5deg 看起来像排版事故，不像贴上去的纸。
+  const tilt = (card.id % 5) - 2; // -2..2
+  const rotate = `rotate(${tilt * 0.6}deg)`;
   const press = useLongPress(
     () => onAction(card),
     () => onOpen(card),
@@ -41,7 +45,7 @@ export function WeaknessNote({ card, onOpen, onAction, highlighted = false }: We
         tabIndex={0}
         aria-label={`${card.name}，${card.status === 'archived' ? '暂存' : '打开详情'}`}
         onKeyDown={handleKeyDown}
-        style={tone.rotate ? { transform: 'rotate(var(--sticky-observing-rotate))' } : undefined}
+        style={card.status !== 'archived' ? { transform: rotate } : undefined}
         className={cn(
           'relative w-full cursor-pointer select-none rounded-xl px-4 py-3.5 text-left shadow-card',
           'transition-shadow hover:shadow-sheet',
@@ -125,4 +129,6 @@ function FoldedCorner() {
     />
   );
 }
+
+
 

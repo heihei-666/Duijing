@@ -29,15 +29,15 @@ interface EventCardHeroProps {
  */
 export function EventCardHero({ onRecord }: EventCardHeroProps) {
   return (
-    <section className="rounded-2xl border border-light bg-surface px-5 py-5 shadow-card">
+    <section className="rounded-2xl border border-light bg-surface p-6 shadow-card">
       <p className="text-[11px] tracking-wide text-tertiary">今天</p>
-      <h2 className="mt-2 text-[19px] font-medium leading-snug text-primary">
+      <h2 className="mt-2 text-xl font-medium leading-snug text-primary">
         今天有什么让你不爽的瞬间？
       </h2>
       <p className="mt-1.5 text-[13px] leading-relaxed text-secondary">
         记一笔，AI 帮你看看盲区。
       </p>
-      <Button size="lg" fullWidth className="mt-4" onClick={onRecord}>
+      <Button size="lg" fullWidth className="mt-5" onClick={onRecord}>
         记一笔
       </Button>
       <p className="mt-2 text-center text-[11px] text-tertiary">
@@ -46,3 +46,4 @@ export function EventCardHero({ onRecord }: EventCardHeroProps) {
     </section>
   );
 }
+
