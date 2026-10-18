@@ -167,6 +167,19 @@
 
 **GET /api/auth/invite** → `{ "code": "AB12CD34", "link": "https://host/join/AB12CD34", "used_count": 3 }`
 
+**GET /api/auth/bootstrap**（公开，无需登录）→ 实例初始化状态，注册页用它决定要不要显示邀请码输入框：
+
+```jsonc
+{ "needs_first_user": false,   // 还没有**正式账号**（访客不算）→ 你是第一个，直接注册
+  "user_count": 4,             // 正式账号数
+  "guest_count": 2,            // 访客数（临时账号，不计入 user_count）
+  "open_register": false,
+  "invite_required": true }
+```
+
+> `needs_first_user` 只看**正式账号**。如果按总表计数，部署者先点一次「免费试用」
+> 建了个访客，就会把自己的引导入口堵死 —— 见第 16.3 节。
+
 ---
 
 ## 2. 状态栏
@@ -727,23 +740,35 @@ Service Worker 通过 `push` 事件接收，`notificationclick` 打开 `url`。
 
 ```jsonc
 // 请求
-{ "username": "alice", "password": "至少8位", "nickname": "" }   // nickname 选填，留空用用户名兜底
+{ "invite_code": "AB12CD34",              // 邀请码，trim + 转大写后比对
+  "username": "alice", "password": "至少8位", "nickname": "" }   // nickname 选填，留空用用户名兜底
 // 响应 200
 { "user": { "id": 9, "username": "alice", "nickname": "alice",
             "is_admin": false, "is_guest": false, "created_at": "..." },
-  "token": "..." }
+  "token": "...",
+  "is_first_user": false }
 ```
 
 | 状态码 | 含义 |
 |---|---|
 | 400 | 当前账号不是访客（`{"detail":"当前账号不是访客账号，无需认领"}`） |
 | 400 | 用户名不合规 / 密码太弱（规则见 `app/security.py`：3–32 位字母数字`_``-`；密码 ≥ 8 位且非纯数字） |
+| 400 | 缺邀请码（`"注册需要邀请码。…"`）/ 邀请码无效（`"邀请码无效"`） |
 | 409 | 用户名已被占用 |
 | 401 | 未登录（没有可认领的账号） |
 
-> **认领不需要邀请码**。这是有意的：从落地页进来的人手上不可能有码。
-> 代价是邀请制事实上变成「邀请码，或完成一次访客体验」——这是产品决定，
-> 记在这里而不是让它悄悄发生。
+> **认领和注册走同一道门禁。** `invite_code` 是必需的（受 `ALLOW_OPEN_REGISTER` 控制），
+> 认领成功会把 `invited_by` 记到邀请人名下（邀请人的「已邀请人数」才会计数）。
+>
+> 早期版本这里**漏了邀请码校验**，于是「辩完一场 → 点保存」就能拿到正式账号 ——
+> 邀请制事实上等于开放注册，而且认领后的账号没有每日 AI 上限。
+> 这个洞已修，见 `app/api/auth.py::claim_guest` 的说明。
+>
+> **唯一例外**：实例上还没有任何**正式账号**时，认领免码，且认领者成为管理员
+> （响应里 `is_first_user: true`）。与 `POST /auth/register` 的首个用户语义一致。
+> 这条例外是必需的：否则部署者先点了「免费试用」建出访客记录后，
+> 「第一个账号」的判定就永远不成立，他会把自己的引导入口堵死。
+> 判断口径因此是 `_real_user_count()`（只数正式账号，**访客不计入**）。
 
 ### 16.4 访客成本上限
 

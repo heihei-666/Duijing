@@ -86,6 +86,7 @@ export function ClaimSheet({ open, onClose, successBody }: ClaimSheetProps) {
   const navigate = useNavigate();
   const claimAccount = useAuthStore((state) => state.claimAccount);
 
+  const [inviteCode, setInviteCode] = useState('');
   const [username, setUsername] = useState('');
   const [nickname, setNickname] = useState('');
   const [password, setPassword] = useState('');
@@ -95,10 +96,19 @@ export function ClaimSheet({ open, onClose, successBody }: ClaimSheetProps) {
   const [error, setError] = useState<string | null>(null);
   /** 用户名单独的错误 —— 409 要显示在用户名下面，而不是表单底部 */
   const [usernameError, setUsernameError] = useState<string | null>(null);
+  /**
+   * 邀请码单独的错误。
+   *
+   * 后端两种 400（「需要邀请码」「邀请码无效」）说的都是邀请码的事，
+   * 按消息里有没有「邀请码」分流到这个输入框下面 —— 落在表单底部的话，
+   * 用户会以为自己密码填错了。
+   */
+  const [inviteError, setInviteError] = useState<string | null>(null);
 
   // 每次打开都从干净状态开始：上一次成功过之后再打开，不能还显示「已保存」
   useEffect(() => {
     if (!open) return;
+    setInviteCode('');
     setUsername('');
     setNickname('');
     setPassword('');
@@ -106,14 +116,20 @@ export function ClaimSheet({ open, onClose, successBody }: ClaimSheetProps) {
     setClaimed(false);
     setError(null);
     setUsernameError(null);
+    setInviteError(null);
   }, [open]);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
+    // 邀请码统一转大写：后端也这么归一化，用户手输小写不该被判无效
+    const trimmedInvite = inviteCode.trim().toUpperCase();
     const trimmedUsername = username.trim();
     const trimmedNickname = nickname.trim();
 
+    // 邀请码**不由前端硬性拦截**：要不要它是一句服务端策略
+    // （`ALLOW_OPEN_REGISTER`），前端猜不到。放行让后端判，
+    // 它返回的 400 文案比「必填」两个字清楚得多，而且能落到邀请码输入框下面。
     const nameIssue = usernameIssue(trimmedUsername);
     if (nameIssue) {
       setUsernameError(nameIssue);
@@ -128,8 +144,10 @@ export function ClaimSheet({ open, onClose, successBody }: ClaimSheetProps) {
     setSubmitting(true);
     setError(null);
     setUsernameError(null);
+    setInviteError(null);
     try {
       await claimAccount({
+        invite_code: trimmedInvite,
         username: trimmedUsername,
         password,
         // 昵称选填：留空时后端用用户名兜底，所以这里显式发空串而不是省略字段
@@ -137,12 +155,15 @@ export function ClaimSheet({ open, onClose, successBody }: ClaimSheetProps) {
       });
       setClaimed(true);
     } catch (cause) {
-      // 409 = 用户名被占用。这是唯一一个「换个名字就能过」的错误，
-      // 必须落在用户名输入框下面，否则用户不知道要改哪里。
+      const message = cause instanceof Error ? cause.message : '保存失败，请稍后再试';
       if (cause instanceof ApiError && cause.status === 409) {
-        setUsernameError(cause.message);
+        // 409 = 用户名被占用。这是唯一一个「换个名字就能过」的错误，
+        // 必须落在用户名输入框下面，否则用户不知道要改哪里。
+        setUsernameError(message);
+      } else if (cause instanceof ApiError && cause.status === 400 && message.includes('邀请码')) {
+        setInviteError(message);
       } else {
-        setError(cause instanceof Error ? cause.message : '保存失败，请稍后再试');
+        setError(message);
       }
     } finally {
       setSubmitting(false);
@@ -205,6 +226,28 @@ export function ClaimSheet({ open, onClose, successBody }: ClaimSheetProps) {
         <form id="guest-claim-form" onSubmit={handleSubmit} className="space-y-4" noValidate>
           <p className="text-[13px] leading-relaxed text-secondary">{GUEST_COPY.claimLead}</p>
 
+          {/*
+            邀请码放在**最前面**：它是这条路能不能走通的前提。
+            放在最后的话，用户要先把用户名、昵称、密码全填一遍，
+            才在最底下发现「我还差一个码」—— 白填一遍是最容易让人放弃的体验。
+          */}
+          <Field
+            label={GUEST_COPY.claimInvite}
+            name="invite_code"
+            placeholder="例如 AB12CD34"
+            autoCapitalize="characters"
+            autoCorrect="off"
+            spellCheck={false}
+            className="tracking-[0.15em]"
+            hint={GUEST_COPY.claimInviteHint}
+            error={inviteError}
+            value={inviteCode}
+            onChange={(event) => {
+              setInviteCode(event.target.value.toUpperCase());
+              if (inviteError) setInviteError(null);
+            }}
+          />
+
           <Field
             label={GUEST_COPY.claimUsername}
             name="username"
@@ -244,7 +287,8 @@ export function ClaimSheet({ open, onClose, successBody }: ClaimSheetProps) {
 
           {error ? <p className="text-xs leading-relaxed text-danger">{error}</p> : null}
 
-          <p className="text-[11px] leading-relaxed text-tertiary">{GUEST_COPY.saveRetention}</p>
+          {/* 没码的人最需要知道的一句：你的东西没白做。 */}
+          <p className="text-[11px] leading-relaxed text-tertiary">{GUEST_COPY.claimNoCodeHint}</p>
         </form>
       )}
     </Sheet>

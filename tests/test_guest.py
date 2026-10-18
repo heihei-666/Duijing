@@ -182,6 +182,22 @@ class TestGuestCostQuota:
         assert self._new_debate(actor, 1).status_code == 201
 
 
+def _claim_json(username: str, *, invite_code: str | None = None, nickname: str = "") -> dict:
+    """认领请求体。
+
+    默认带一个**有效邀请码** —— 认领和注册走同一道门禁（见
+    `app/api/auth.py` 的 claim_guest 说明），测试不能靠后门绕过。
+    """
+    from tests.conftest import bootstrap_invite_code
+
+    return {
+        "username": username,
+        "password": "ClaimPass123",
+        "nickname": nickname,
+        "invite_code": bootstrap_invite_code() if invite_code is None else invite_code,
+    }
+
+
 class TestClaimGuest:
     """认领：访客变正式账号，**数据原地继承，不搬家**。"""
 
@@ -222,12 +238,9 @@ class TestClaimGuest:
         )
         observations_before = actor.get("/api/observations").json()["observations"]
 
-        # ④ 点「保存」→ 认领成正式账号
+        # ④ 点「保存」→ 认领成正式账号（需要邀请码，和注册同一道门禁）
         name = unique_name("flow")
-        claimed = actor.post(
-            "/api/auth/claim",
-            json={"username": name, "password": "ClaimPass123", "nickname": ""},
-        )
+        claimed = actor.post("/api/auth/claim", json=_claim_json(name))
         assert claimed.status_code == 200, claimed.text
         assert claimed.json()["user"]["is_guest"] is False
 
@@ -257,10 +270,7 @@ class TestClaimGuest:
         room_id = created.json().get("room", {}).get("id") or created.json().get("id")
 
         name = unique_name("cl")
-        claimed = actor.post(
-            "/api/auth/claim",
-            json={"username": name, "password": "ClaimPass123", "nickname": name},
-        )
+        claimed = actor.post("/api/auth/claim", json=_claim_json(name, nickname=name))
         assert claimed.status_code == 200, claimed.text
         u = claimed.json()["user"]
         assert u["is_guest"] is False
@@ -284,10 +294,7 @@ class TestClaimGuest:
 
         taken = register(client, unique_name("tk"))
         actor, _ = _make_guest(client)
-        r = actor.post(
-            "/api/auth/claim",
-            json={"username": taken.username, "password": "ClaimPass123"},
-        )
+        r = actor.post("/api/auth/claim", json=_claim_json(taken.username))
         assert r.status_code == 409
 
     def test_claim_rejects_weak_password(self, client, unique_name):
@@ -302,9 +309,84 @@ class TestClaimGuest:
         from tests.conftest import register
 
         actor = register(client, unique_name("nc"))
-        r = actor.post(
-            "/api/auth/claim",
-            json={"username": unique_name("nc2"), "password": "ClaimPass123"},
-        )
+        r = actor.post("/api/auth/claim", json=_claim_json(unique_name("nc2")))
         assert r.status_code == 400
         assert "不是访客" in r.json()["detail"]
+
+    # ── 邀请码门禁（这一条曾经漏了）────────────────────────────
+
+    def test_claim_requires_invite_code(self, client, unique_name):
+        """认领**必须**有邀请码，否则邀请制等于开放注册。
+
+        这是真实被用户发现的问题：通过微辩论保存记录就能绕过邀请码进系统，
+        而且认领后的账号没有每日 AI 上限 —— 等于给陌生人开了无限额度。
+        """
+        actor, _ = _make_guest(client)
+        r = actor.post(
+            "/api/auth/claim",
+            json={
+                "username": unique_name("nocode"),
+                "password": "ClaimPass123",
+                "invite_code": "",
+            },
+        )
+        assert r.status_code == 400, r.text
+        detail = r.json()["detail"]
+        assert "邀请码" in detail, f"文案必须说清缺的是什么: {detail}"
+        # 没认领成功 → 还是访客，数据还在他名下
+        me = actor.get("/api/auth/me").json()["user"]
+        assert me["is_guest"] is True, "认证失败不能把人家的访客身份弄丢"
+
+    def test_claim_rejects_invalid_invite_code(self, client, unique_name):
+        actor, _ = _make_guest(client)
+        r = actor.post(
+            "/api/auth/claim",
+            json=_claim_json(unique_name("badcode"), invite_code="ZZZZZZZZ"),
+        )
+        assert r.status_code == 400
+        assert "邀请码无效" in r.json()["detail"]
+
+    def test_claim_with_valid_code_credits_inviter(self, client, unique_name):
+        """用谁的码认领，就要记在谁名下 —— 否则邀请人的「已邀请人数」永远是 0。"""
+        from tests.conftest import register
+
+        owner = register(client, unique_name("own"))
+        before = owner.get("/api/auth/invite").json()
+        assert before["used_count"] == 0, "新账号还没邀请过人"
+
+        actor, _ = _make_guest(client)
+        r = actor.post(
+            "/api/auth/claim",
+            json=_claim_json(unique_name("cod"), invite_code=before["code"]),
+        )
+        assert r.status_code == 200, r.text
+
+        after = owner.get("/api/auth/invite").json()
+        assert after["used_count"] == 1, "认领必须计入邀请人的已邀请人数"
+
+    def test_first_real_account_can_claim_without_code(self, client, unique_name, monkeypatch):
+        """实例上还没有任何**正式账号**时，认领免码，且成为管理员。
+
+        不做这个例外，新部署的实例会没有管理员：第一个正式账号本该由
+        `/auth/register` 免码创建，但如果部署者先点了「免费试用」，
+        他手上就永远不会有邀请码了。
+        """
+        import app.api.auth as auth_module
+
+        async def fake_real_count(session):
+            return 0
+
+        monkeypatch.setattr(auth_module, "_real_user_count", fake_real_count)
+
+        actor, _ = _make_guest(client)
+        r = actor.post(
+            "/api/auth/claim",
+            json={
+                "username": unique_name("first"),
+                "password": "ClaimPass123",
+                "invite_code": "",
+            },
+        )
+        assert r.status_code == 200, r.text
+        assert r.json()["user"]["is_admin"] is True
+        assert r.json()["is_first_user"] is True
