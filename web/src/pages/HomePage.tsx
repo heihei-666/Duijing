@@ -6,7 +6,10 @@ import type { StatusBar, TodayLoop } from '@/api/types';
 import { Button } from '@/components/common/Button';
 import { ActionSection } from '@/features/status-bar/ActionSection';
 import { EnergySheet } from '@/features/status-bar/EnergySheet';
+import { EventCardHero } from '@/features/status-bar/EventCardHero';
+import { GreetingLine } from '@/features/status-bar/GreetingLine';
 import { ObservationSection } from '@/features/status-bar/ObservationSection';
+import { PastYouSection } from '@/features/status-bar/PastYouSection';
 import { QuickDebateSheet } from '@/features/status-bar/QuickDebateSheet';
 import { QuickEventCardSheet } from '@/features/status-bar/QuickEventCardSheet';
 import { StatusHeader } from '@/features/status-bar/StatusHeader';
@@ -14,13 +17,21 @@ import { TodayLoopsSection } from '@/features/status-bar/TodayLoopsSection';
 
 /**
  * 首页 = 状态栏（方案 3.7 / API GET /api/status-bar）。
- * 四块：日期+精力+连续天数 / 今天练什么 / AI 观察 / 两个入口。
- * 每块各自收形，空状态不喧哗。
  *
- * Cold start 改造：新用户注册后四块全是空的，光靠克制文案他不知道点哪。
- * 所以两个空状态各给一个「点了一定有结果」的入口，且都不跳页、不开新页面：
+ * 【本轮重排的理由（真实用户反馈）】
+ *
+ * 反馈是「不知道每天来干嘛」。原来首页第一行动是「和 AI 辩一轮」，
+ * 门槛高到只有状态最好的那 5 分钟才够得上；而「记一笔」只要一句话。
+ * 留存不是靠每天辩一场建立的，是靠「今天也来了一下」建立的。
+ *
+ * 所以现在的顺序是：
+ *   日期 → 一句问候 → **记一笔（最低门槛）** → 过去的你（锚点）
+ *   → 今天练什么 → AI 观察 → 辩一轮（门槛最高，放最后）
+ *
+ * 分工（每块各自收形，空状态不喧哗）：
+ *   记一笔   → QuickEventCardSheet（一句话，不跳页）
  *   今天练什么 → QuickDebateSheet（随机辩题 + 两个立场 → 直接进辩论房）
- *   AI 观察   → QuickEventCardSheet（只问一句话 → POST /api/event-cards）
+ *   AI 观察  → 直接在这块里「加入 / 忽略」
  */
 export default function HomePage() {
   const navigate = useNavigate();
@@ -135,6 +146,19 @@ export default function HomePage() {
         }}
       />
 
+      {/* 先说话，再给数据 —— 首页不该像一个业绩看板 */}
+      <GreetingLine text={data.greeting} />
+
+      {/*
+        入口顺序按**门槛从低到高**排：先一句话（事件卡），再一场辩论。
+        原来第一行动是「和 AI 辩一轮」，它要求用户正好处在状态最好的 5 分钟，
+        而留存从来不是靠那 5 分钟建立的，是靠「今天也来了一下」。
+      */}
+      <EventCardHero onRecord={() => setQuickRecordOpen(true)} />
+
+      {/* 「过去的你」：跨时间对比。历史不足时服务端给 null，整块不渲染 */}
+      {data.past_you ? <PastYouSection data={data.past_you} /> : null}
+
       <TodayLoopsSection
         loops={data.today_loops}
         onSelect={handleSelectLoop}
@@ -153,23 +177,19 @@ export default function HomePage() {
       />
 
       {/*
-        全新用户：底部两组全局快捷按钮与卡片里的行动重复
-        （「和 AI 辩一轮」≈「开始」，「+ 记一笔」≈「记一笔」），
-        同屏两个主色按钮会稀释「一个明确的行动」。
-        所以这个阶段把它们藏起来，只留卡片里的两个入口；
-        两张卡片也已经向下延伸填满原本的空间，不会显得头重脚轻。
+        全新用户：底部快捷按钮与卡片里的行动重复，同屏两个主色按钮会稀释焦点，
+        所以这个阶段藏起来，只留卡片里的入口。
 
-        一旦用户留下任何痕迹就恢复显示——包括「记了几笔事件卡」这种情况：
+        一旦用户留下任何痕迹就恢复——包括「记了几笔事件卡」这种情况：
         那种用户的两张卡片仍然是空的（事件卡要等夜间扫描才会变成观察），
         但他显然已经开始用了，不该再按全新用户对待。
       */}
       {isFreshStart ? (
         <p className="pt-1 text-center text-[11px] text-disabled">这是你的第一站</p>
       ) : (
-        <ActionSection
-          onDebate={() => navigate('/debates')}
-          onRecord={() => navigate('/assets?tab=events')}
-        />
+        // 这里只剩辩论入口：记一笔已经提到首页最上面（EventCardHero），
+        // 同屏两个「记一笔」会让用户犹豫点哪个。
+        <ActionSection onDebate={() => navigate('/debates')} />
       )}
 
       <QuickDebateSheet open={quickDebateOpen} onClose={() => setQuickDebateOpen(false)} />

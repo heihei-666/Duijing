@@ -37,6 +37,21 @@ interface DebateComposerProps {
     onClick: () => void;
     loading?: boolean;
   } | null;
+  /**
+   * 「我卡住了，给我提示」—— 让 AI 给一个能接得住的话头。
+   *
+   * 为什么这个按钮必须存在：真实用户反馈里最扎的一句是「我像在被审问」。
+   * 被追问到无话可说时，人不会因此照见自己，只会关掉页面。
+   * 台阶把「卡住」从一次失败变成一次**被接住** —— 用户留在对话里，
+   * 才有后面的复盘。
+   */
+  onHint: () => void;
+  hintLoading: boolean;
+  /** 服务端返回的话头；null = 当前没有显示中的提示 */
+  hint: string | null;
+  hintError: string | null;
+  /** 收起提示（用户自己关掉，或一开始打字就自动收起） */
+  onDismissHint: () => void;
 }
 
 /**
@@ -58,6 +73,11 @@ export function DebateComposer({
   error,
   notice,
   noticeAction,
+  onHint,
+  hintLoading,
+  hint,
+  hintError,
+  onDismissHint,
 }: DebateComposerProps) {
   const [confirmAbandon, setConfirmAbandon] = useState(false);
 
@@ -109,13 +129,42 @@ export function DebateComposer({
         </div>
       ) : null}
 
+      {/*
+        台阶（AI 给的话头）。
+        刻意做成**一块可以关掉的临时提示**，而不是一条辩论消息：
+        它不是对话的一部分，写进记录会让 AI 下一轮变得小心翼翼，
+        也会让复盘把一句提示当成用户说过的话。
+      */}
+      {hint ? (
+        <div className="mb-2 rounded-xl bg-primary-light px-3 py-2.5">
+          <div className="flex items-start justify-between gap-2">
+            <p className="text-[11px] text-tertiary">给你一个话头</p>
+            <button
+              type="button"
+              onClick={onDismissHint}
+              aria-label="收起提示"
+              className="-mr-1 -mt-0.5 shrink-0 rounded-md px-1.5 text-[11px] text-tertiary hover:bg-inset"
+            >
+              收起
+            </button>
+          </div>
+          <p className="mt-1 text-[13px] leading-relaxed text-primary">{hint}</p>
+        </div>
+      ) : null}
+
+      {hintError ? <p className="mb-2 text-xs text-danger">{hintError}</p> : null}
+
       <label className="sr-only" htmlFor="debate-composer">
         你的发言
       </label>
       <textarea
         id="debate-composer"
         value={value}
-        onChange={(event) => onChange(event.target.value)}
+        onChange={(event) => {
+          onChange(event.target.value);
+          // 一动手就收起提示：他已经知道怎么接了，提示继续留着会挡视线
+          if (hint && event.target.value !== '') onDismissHint();
+        }}
         onKeyDown={(event) => {
           // 手机端回车＝换行，桌面端给一个 Ctrl/Cmd + Enter 的快捷发送
           if ((event.metaKey || event.ctrlKey) && event.key === 'Enter' && canSend) {
@@ -166,13 +215,29 @@ export function DebateComposer({
             </Button>
           </span>
         ) : (
-          <Button
-            variant="ghost"
-            disabled={paused || sending || streaming}
-            onClick={() => setConfirmAbandon(true)}
-          >
-            这轮我放弃
-          </Button>
+          <span className="flex min-w-0 flex-wrap items-center gap-1.5">
+            {/*
+              台阶按钮放在「这轮我放弃」**前面**，且用中性色：
+              放弃和求助是两种完全不同的信号，要让用户分得清 ——
+              以前只有「放弃」，而放弃意味着「这一轮我认输」。
+              给一个「我卡住了」的出口，才是把「被审问」变成「被接住」。
+            */}
+            <Button
+              variant="ghost"
+              disabled={paused || streaming}
+              loading={hintLoading}
+              onClick={onHint}
+            >
+              我卡住了，给我提示
+            </Button>
+            <Button
+              variant="ghost"
+              disabled={paused || sending || streaming}
+              onClick={() => setConfirmAbandon(true)}
+            >
+              这轮我放弃
+            </Button>
+          </span>
         )}
 
         <Button className="min-w-[96px]" disabled={!canSend} loading={sending} onClick={onSend}>

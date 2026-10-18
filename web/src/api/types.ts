@@ -381,6 +381,32 @@ export interface StatusBarObservation {
   created_at: string;
 }
 
+/**
+ * 「过去的你」—— 首次记录 vs 最近一周的撑住率对比。
+ *
+ * 这是首页唯一一块**跨时间**的数据。存在的理由：
+ * 「今天练什么」「AI 观察」都是当下的，而改善弱点反人性、很累，
+ * 唯一能持续拽住人的是「我真的在变」的实感 —— 它必须靠可对照的数字，
+ * 不能靠一句安慰。
+ *
+ * 服务端只在两侧各至少有 2 次触发时才返回它（否则是噪声，不是趋势），
+ * 数据不足时整个字段为 `null`，前端整块不渲染。
+ */
+export interface PastYou {
+  /** 第一次记录距离今天多少天 */
+  days_ago: number;
+  /** 第一次记录的日期 YYYY-MM-DD */
+  first_date: string;
+  /** 刚开始那 7 天的撑住率（0–100） */
+  early_rate: number;
+  /** 刚开始那 7 天的有效触发次数 */
+  early_total: number;
+  /** 最近 7 天的撑住率（0–100） */
+  recent_rate: number;
+  /** 最近 7 天的有效触发次数 */
+  recent_total: number;
+}
+
 /** GET /api/status-bar */
 export interface StatusBar {
   /** 本地日期 YYYY-MM-DD，由服务端判定 */
@@ -392,6 +418,16 @@ export interface StatusBar {
   /** null 表示未填 */
   mood: Mood | null;
   streak_days: number;
+  /**
+   * 首页的一句问候。
+   *
+   * **不是 AI 实时调用**：服务端用规则从「昨天有没有撑住 / 有没有写过事件卡 /
+   * 连续几天」生成（见 `app/services/status.py` 的说明）。首页首屏是产品
+   * 最重要的 300 毫秒，为一句问候语同步调模型不划算。
+   */
+  greeting: string;
+  /** 「过去的你」对比区；历史不足时为 null */
+  past_you: PastYou | null;
   /**
    * 是否处于「全新用户」状态：两张卡片都空，且从未留下任何痕迹。
    *

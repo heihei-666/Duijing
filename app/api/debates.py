@@ -632,6 +632,47 @@ async def abandon_round(
     }
 
 
+@router.post("/{room_id}/hint")
+async def debate_hint(
+    room_id: int,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """「我卡住了，给我提示」—— 给一个能接得住的话头。
+
+    【为什么要这个接口，而不是让用户自己硬想】
+
+    真实用户反馈里最常见的一句是「我像在被审问」。被追问到无话可说时，
+    人不会因此照见自己，只会关掉页面。台阶把「卡住」从一次失败
+    变成一次**被接住**——用户留在了对话里，才有后面的复盘。
+
+    【为什么它不落库、不占一轮、不算 AI 发言】
+
+    台阶是用户的私密辅助。写进辩论记录会带来三个副作用：
+      1. AI 下一轮知道「他需要帮助」，会变得小心翼翼，对话失真
+      2. 复盘会把一句 AI 的提示当成「用户的发言」来观察
+      3. 轮次计数被污染
+    所以它只是一次性返回的文本。
+
+    【为什么它要单独限流】
+
+    这是一次真实的 AI 调用，且用户可能连点。用和发起辩论同一档
+    `AI_RATE_PER_MIN` 限流 —— 正常人不该需要一分钟要 6 次提示。
+    """
+    room, _is_owner, _count = await load_room_for_user(session, room_id, user)
+
+    if room.status != DebateStatus.ACTIVE.value:
+        raise HTTPException(status_code=409, detail="这场辩论已经结束或已暂停")
+
+    enforce(ai_limiter, f"debate-hint:{user.id}", settings.AI_RATE_PER_MIN, "操作过于频繁")
+
+    profile = await ensure_profile(session, user)
+    history = await debate_service.load_history(session, room.id, limit=20)
+    hint = await debate_service.generate_hint(room, history, level=profile.level)
+
+    return {"hint": hint}
+
+
 # ── SSE ───────────────────────────────────────────────────────
 
 
