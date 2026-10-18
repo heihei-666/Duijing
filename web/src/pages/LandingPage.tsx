@@ -136,16 +136,40 @@ export function LandingPage() {
           ))}
         </div>
 
-        {/* ── 老用户入口（灰色小链接）──────────────────────── */}
-        <div className="mt-12 text-center text-xs text-tertiary">
-          <span>已有账号？</span>
-          <Link to="/login" className="ml-1 underline hover:text-secondary">
-            登录
-          </Link>
-          <span className="mx-1">·</span>
-          <Link to="/register" className="underline hover:text-secondary">
-            注册
-          </Link>
+        {/*
+          ── 老用户入口 ─────────────────────────────────────
+          之前这里是两个 12px 的灰色下划线文字，藏在三张特征卡下面 ——
+          **回访用户要滚 1.5 屏才找得到登录口**。而他们恰恰是最没耐心的一群人：
+          已经知道自己要什么，只想快点进去。
+
+          现在改成两个 44px 高的按钮（和主 CTA 同一套视觉语言，但用描边不用实底），
+          宽度与上方两个 CTA 对齐。位置仍在底部 —— 刻意不放到主 CTA 旁边，
+          因为这一页的第一眼必须留给「试一下」，不是「进去」。
+        */}
+        <div className="mx-auto mt-12 w-full max-w-sm">
+          <p className="text-center text-[13px] text-tertiary">已有账号？直接登录，不用再体验一遍。</p>
+          <div className="mt-3 flex gap-3">
+            <Link
+              to="/login"
+              className="flex h-11 flex-1 items-center justify-center rounded-xl border border-light bg-surface text-[15px] font-medium text-primary transition-colors hover:bg-elevated active:bg-inset"
+            >
+              登录
+            </Link>
+            <Link
+              to="/register"
+              className="flex h-11 flex-1 items-center justify-center rounded-xl border border-light bg-surface text-[15px] font-medium text-primary transition-colors hover:bg-elevated active:bg-inset"
+            >
+              注册
+            </Link>
+          </div>
+          {/*
+            把「注册要邀请码」写在这里，而不是等用户辩完三分钟再告诉他。
+            体验本身完全免费、不要码；只有「保存」需要。
+            提前说清楚，撞到那一步时他才不会觉得是套路。
+          */}
+          <p className="mt-3 text-center text-[11px] leading-relaxed text-tertiary">
+            注册是邀请制，需要一个邀请码；体验不需要。
+          </p>
         </div>
       </div>
     </div>

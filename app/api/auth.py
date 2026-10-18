@@ -70,6 +70,25 @@ async def _user_count(session: AsyncSession) -> int:
     return int(await session.scalar(select(func.count(User.id))) or 0)
 
 
+async def _real_user_count(session: AsyncSession) -> int:
+    """**正式账号**数量 —— 不含访客。
+
+    【为什么「第一个用户免邀请码」必须按这个数算】
+
+    访客也是一条 `user` 记录。如果按总表计数，会出现一个很隐蔽的死锁：
+
+       部署者打开自己的新站 → 先点了「免费试用」（建了 1 条访客记录）
+       → 再去注册自己的管理员账号 → 后端认为「已经有用户了，需要邀请码」
+       → 而他手上不可能有码，因为能发码的人还没注册。
+
+    也就是说：**只要他先体验过，就把自己的引导入口堵死了。**
+    所以「第一个账号」必须只数正式账号，访客不算。
+    """
+    return int(
+        await session.scalar(select(func.count(User.id)).where(User.is_guest.is_(False))) or 0
+    )
+
+
 async def _unique_invite_code(session: AsyncSession) -> str:
     for _ in range(10):
         code = generate_code(8)
@@ -113,13 +132,19 @@ async def bootstrap_status(session: AsyncSession = Depends(get_session)):
     而他手上根本没有邀请码，因为能发邀请码的人还没注册。
 
     这个端点让注册页能如实告诉第一个人：「你是第一个，直接注册就行」。
+
+    注意 `needs_first_user` 按**正式账号**算，访客不计入 ——
+    否则部署者先点了一次「免费试用」，引导入口就会被自己堵死
+    （见 `_real_user_count` 的说明）。
     """
-    count = await _user_count(session)
+    real = await _real_user_count(session)
+    total = await _user_count(session)
     return {
-        "needs_first_user": count == 0,
-        "user_count": count,
+        "needs_first_user": real == 0,
+        "user_count": real,
+        "guest_count": total - real,
         "open_register": settings.ALLOW_OPEN_REGISTER,
-        "invite_required": count > 0 and not settings.ALLOW_OPEN_REGISTER,
+        "invite_required": real > 0 and not settings.ALLOW_OPEN_REGISTER,
     }
 
 
@@ -142,7 +167,7 @@ async def register(
     if existing is not None:
         raise HTTPException(status_code=409, detail="用户名已被占用")
 
-    is_first_user = (await _user_count(session)) == 0
+    is_first_user = (await _real_user_count(session)) == 0
 
     inviter: User | None = None
     if not is_first_user and not settings.ALLOW_OPEN_REGISTER:
@@ -255,6 +280,7 @@ class ClaimPayload(BaseModel):
     username: str = Field(..., min_length=3, max_length=32)
     password: str = Field(..., max_length=128)
     nickname: str = Field("", max_length=64)
+    invite_code: str = Field("", max_length=32)
 
 
 @router.post("/claim")
@@ -275,6 +301,14 @@ async def claim_guest(
 
     这也正是「访客 = 临时用户」这个设计最大的好处：**转化路径上没有数据搬迁**。
 
+    【认领也要邀请码 —— 这一条曾经漏了】
+
+    早期实现里认领不校验邀请码，于是「辩完一场 → 点保存」就能拿到正式账号：
+    **邀请制事实上变成了开放注册**，而且认领后的账号没有每日 AI 上限。
+    现在认领与注册走同一条门禁（`ALLOW_OPEN_REGISTER` / 邀请码 / 邀请人归属），
+    唯一的例外是「实例上还没有任何正式账号」——那时认领的人就是第一个管理员，
+    与 `/auth/register` 的语义一致（否则新部署的实例会没有管理员）。
+
     【为什么要在认领时重新签发令牌】
 
     JWT 里带着 username。改名之后旧令牌里的 username 就过期了，
@@ -293,17 +327,42 @@ async def claim_guest(
     if existing is not None:
         raise HTTPException(status_code=409, detail="用户名已被占用")
 
+    is_first_real_user = (await _real_user_count(session)) == 0
+
+    inviter: User | None = None
+    if not is_first_real_user and not settings.ALLOW_OPEN_REGISTER:
+        supplied = payload.invite_code.strip().upper()
+        if not supplied:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "注册需要邀请码。向给你这个链接的人要一个，"
+                    "拿到后回到这场辩论里就能保存。"
+                ),
+            )
+        inviter = await _validate_invite(session, supplied)
+        if inviter is None and supplied != settings.BOOTSTRAP_INVITE_CODE:
+            raise HTTPException(status_code=400, detail="邀请码无效")
+
     user.username = username
     user.password_hash = hash_password(payload.password)
     user.nickname = payload.nickname.strip() or username
     user.is_guest = False
+    # 归属到邀请人名下：邀请人的「已邀请人数」是靠统计 invited_by 得来的，
+    # 不写这一笔，他发的码就永远显示「用过 0 次」。
+    if inviter is not None:
+        user.invited_by = inviter.id
+    # 实例上的第一个正式账号自动成为管理员（与 /auth/register 保持一致）。
+    # 不这么做的话，一个只会从落地页体验进来的新实例将永远没有管理员。
+    if is_first_real_user:
+        user.is_admin = True
     await session.commit()
     await session.refresh(user)
 
     token = create_access_token(user.id, user.username)
     set_auth_cookie(response, token)
 
-    return {"user": _user_dict(user), "token": token}
+    return {"user": _user_dict(user), "token": token, "is_first_user": is_first_real_user}
 
 
 @router.post("/login")

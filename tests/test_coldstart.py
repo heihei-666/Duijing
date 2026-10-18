@@ -564,15 +564,17 @@ class TestFirstUserBootstrap:
     def test_bootstrap_open_when_no_user(self, client, monkeypatch):
         """实例为空时应告知「需要第一个用户」。"""
         import app.api.auth as auth_module
-        from sqlalchemy import func, select
-        from app.models import User
 
         async def fake_count(session):
             return 0
 
         # 直接替换计数函数，模拟「库里还没有用户」——
-        # 测试会话共用一个库，真实库里已经有引导管理员了
-        monkeypatch.setattr(auth_module, "_user_count", fake_count)
+        # 测试会话共用一个库，真实库里已经有引导管理员了。
+        #
+        # 替换的是 `_real_user_count`（只数正式账号）而不是 `_user_count`：
+        # 「第一个用户免邀请码」必须按正式账号算，否则部署者先点一次
+        # 「免费试用」建了个访客，就会把自己的引导入口堵死。
+        monkeypatch.setattr(auth_module, "_real_user_count", fake_count)
 
         resp = client.get("/api/auth/bootstrap")
         assert resp.status_code == 200

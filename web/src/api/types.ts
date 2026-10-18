@@ -321,18 +321,32 @@ export interface GuestAuthResponse {
  * 「认领」= 把当前访客账号**原地**变成正式账号：补用户名 / 密码 / 昵称，
  * `is_guest` 置 false。数据不搬迁 —— 辩论、观察、复盘本来就挂在这个 id 上，
  * 所以体验完再注册不会丢失刚才那份观察。
+ *
+ * `invite_code` 是**必需的**（实例是邀请制时）：认领和注册走同一道门禁。
+ * 早期这里漏了校验，导致「辩完一场点保存」就能绕过邀请码进系统 ——
+ * 修复说明见 `app/api/auth.py::claim_guest`。
+ * 唯一例外：实例上还没有任何正式账号时，认领者就是第一个管理员，免码。
  */
 export interface ClaimPayload {
+  /** 邀请码。后端会 trim + 转大写后比对 */
+  invite_code: string;
   username: string;
   password: string;
   /** 选填；留空时后端用用户名兜底 */
   nickname: string;
 }
 
-/** POST /api/auth/claim → `{ user, token }`（令牌会重签，因为 JWT 里带 username） */
+/**
+ * POST /api/auth/claim → `{ user, token, is_first_user }`
+ * （令牌会重签，因为 JWT 里带 username）
+ *
+ * `is_first_user` 为 true 表示这是实例上的第一个**正式账号**，
+ * 认领者会成为管理员（与 `/auth/register` 的首个用户语义一致）。
+ */
 export interface ClaimResponse {
   user: User;
   token: string;
+  is_first_user: boolean;
 }
 
 /** GET /api/auth/invite → `{ code, link, used_count }` */

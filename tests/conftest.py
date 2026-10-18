@@ -149,6 +149,15 @@ class Actor:
         return self.client.patch(url, **kw)
 
 
+def bootstrap_invite_code() -> str:
+    """引导管理员签发的邀请码 —— 需要「一个能用的邀请码」时用它。
+
+    和 `register()` 用的是同一个来源：测试必须遵守产品同一条规则
+    （第一个账号免码，之后必须凭码），不能靠后门绕过。
+    """
+    return _BOOTSTRAP.get("invite", "")
+
+
 def register(client: TestClient, username: str, invite_code: str | None = None) -> Actor:
     """注册并拿到令牌。
 

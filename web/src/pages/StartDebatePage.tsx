@@ -87,6 +87,8 @@ export default function StartDebatePage() {
   const [quotaHit, setQuotaHit] = useState(false);
   const [claimOpen, setClaimOpen] = useState(false);
   const [resumable, setResumable] = useState<DebateRoom | null>(null);
+  /** 已辩完、但观察还没保存的那一场（通常是当时没邀请码） */
+  const [unsaved, setUnsaved] = useState<DebateRoom | null>(null);
 
   const sceneRef = useRef<HTMLTextAreaElement | null>(null);
 
@@ -99,16 +101,27 @@ export default function StartDebatePage() {
     return () => window.clearTimeout(timer);
   }, [sceneFirst]);
 
-  // 有进行中的辩论就摆出来（读失败当没有，不阻塞新开一场）
+  /**
+   * 上次留下的辩论摆出来。两个用途：
+   *
+   *   ① 没辩完的 —— 点「继续」，不然他会以为数据丢了
+   *   ② 辩完但没保存的 —— 点「回看并保存」，回到那个房间就能补上邀请码
+   *
+   * ② 是认领需要邀请码之后新增的：当时没码的人关掉页面，第二天再来，
+   * 如果这里什么都不显示，他就再也找不到那场辩论了 —— 而那正好是
+   * 我们让他相信「数据还在、拿到码回来就行」的时刻，找不到就等于失信。
+   *
+   * 两个请求都用 allSettled：一个挂了不影响另一个，也不该阻塞新开一场。
+   */
   useEffect(() => {
     let cancelled = false;
-    listDebates('active,paused')
-      .then((data) => {
+    void Promise.allSettled([listDebates('active,paused'), listDebates('finished')]).then(
+      ([active, finished]) => {
         if (cancelled) return;
-        const first = (data.rooms ?? [])[0];
-        if (first) setResumable(first);
-      })
-      .catch(() => undefined);
+        if (active.status === 'fulfilled') setResumable((active.value.rooms ?? [])[0] ?? null);
+        if (finished.status === 'fulfilled') setUnsaved((finished.value.rooms ?? [])[0] ?? null);
+      },
+    );
     return () => {
       cancelled = true;
     };
@@ -234,6 +247,9 @@ export default function StartDebatePage() {
     </form>
   );
 
+  /** 上次留下的那场：没辩完的优先（那件事还没做完），否则是辩完没保存的 */
+  const leftover = resumable ?? unsaved;
+
   return (
     <div className="min-h-screen bg-base">
       <div className="mx-auto w-full max-w-2xl px-4 pb-10 pt-8 lg:max-w-3xl lg:px-6">
@@ -245,22 +261,29 @@ export default function StartDebatePage() {
           <p className="mt-2 text-[13px] leading-relaxed text-secondary">{GUEST_COPY.startLead}</p>
         </header>
 
-        {/* ── 上次没辩完的 ─────────────────────────────────── */}
-        {resumable ? (
+        {/*
+          ── 上次留下的那场 ─────────────────────────────────
+          优先显示「没辩完的」——那件事还没做完；
+          没有的话再显示「辩完但没保存的」，让他回去补邀请码。
+          两张卡长得一样，只有文案和右侧动作不同。
+        */}
+        {leftover ? (
           <button
             type="button"
-            onClick={() => navigate(`/debates/${resumable.id}`)}
+            onClick={() => navigate(`/debates/${leftover.id}`)}
             className="mt-6 flex min-h-[56px] w-full items-center justify-between gap-3 rounded-xl border border-light bg-surface px-4 py-3 text-left shadow-card transition-colors hover:bg-elevated"
           >
             <span className="min-w-0">
               <span className="block text-[11px] text-tertiary">
-                {GUEST_COPY.startResumeLabel}
+                {resumable ? GUEST_COPY.startResumeLabel : GUEST_COPY.startReviewLabel}
               </span>
               <span className="mt-0.5 line-clamp-2 block text-[14px] leading-snug text-primary">
-                {resumable.topic}
+                {leftover.topic}
               </span>
             </span>
-            <span className="shrink-0 text-[13px] text-brand">继续</span>
+            <span className="shrink-0 text-[13px] text-brand">
+              {resumable ? '继续' : GUEST_COPY.startReviewCta}
+            </span>
           </button>
         ) : null}
 
@@ -287,7 +310,7 @@ export default function StartDebatePage() {
             <p className="text-[13px] leading-relaxed text-primary">{error}</p>
             {quotaHit ? (
               <Button size="sm" className="mt-2.5" onClick={() => setClaimOpen(true)}>
-                {GUEST_COPY.saveCta}
+                {GUEST_COPY.quotaCta}
               </Button>
             ) : null}
           </div>
