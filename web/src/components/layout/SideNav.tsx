@@ -1,9 +1,10 @@
 import { NavLink } from 'react-router-dom';
 
-import { LockIcon } from '@/components/icons';
+import { GearIcon, LockIcon, MoonIcon, SunIcon } from '@/components/icons';
 import { TABS } from '@/components/layout/tabs';
 import { cn } from '@/lib/cn';
 import { isTabLocked, useOnboardingStore } from '@/store/onboarding';
+import { useThemeStore } from '@/store/theme';
 
 /**
  * 桌面端左侧竖向导航（≥1024px）。
@@ -27,10 +28,19 @@ import { isTabLocked, useOnboardingStore } from '@/store/onboarding';
  * 弱点和资产对新用户是空的。点进去看三个空状态，比直接告诉他
  * 「还差什么」更劝退，所以这里挂锁、点击改成弹层说明（见 LockedFeatureSheet）。
  * 注意用的是**拦点击**而不是「禁用」：禁用态点了没有反馈，用户只会以为坏了。
+ *
+ * 【底部两个全局项（`mt-auto` 压到底）】
+ *
+ *   设置 —— 跳 `/assets?tab=settings`。桌面端没有底部标签栏，
+ *           「设置」藏在资产页里等于找不到，所以侧栏底部给它一个固定入口。
+ *   外观 —— 白天 / 黑夜切换。做成两个图标并排的开关，而不是一个「切换」按钮：
+ *           单个按钮看不出当前是哪种模式，也无法直接选另一种。
  */
 export function SideNav() {
   const fresh = useOnboardingStore((s) => s.fresh);
   const openLock = useOnboardingStore((s) => s.openLock);
+  const mode = useThemeStore((s) => s.mode);
+  const setMode = useThemeStore((s) => s.setMode);
 
   return (
     <nav className="fixed inset-y-0 left-0 z-30 hidden w-56 flex-col border-r border-light bg-surface px-3 py-6 lg:flex">
@@ -54,7 +64,7 @@ export function SideNav() {
                   cn(
                     'flex items-center gap-3 rounded-lg px-3 py-2.5 text-[14px] transition-colors',
                     locked
-                      ? 'text-disabled hover:bg-elevated'
+                      ? 'text-tertiary hover:bg-elevated'
                       : isActive
                         ? 'bg-elevated text-primary'
                         : 'text-tertiary hover:bg-elevated hover:text-secondary',
@@ -77,7 +87,51 @@ export function SideNav() {
           );
         })}
       </ul>
+
+      {/* mt-auto 把它压到底部：上面是内容导航，下面是全局项，两类东西分开 */}
+      <div className="mt-auto space-y-3">
+        <NavLink
+          to="/assets?tab=settings"
+          className="flex items-center gap-3 rounded-lg px-3 py-2.5 text-[14px] text-tertiary transition-colors hover:bg-elevated hover:text-secondary"
+        >
+          <GearIcon width={20} height={20} />
+          <span>设置</span>
+        </NavLink>
+
+        <div className="px-1">
+          <p className="mb-1.5 px-2 text-[11px] text-tertiary">外观</p>
+          <div
+            className="flex items-center gap-1 rounded-lg bg-elevated p-1"
+            role="group"
+            aria-label="外观模式"
+          >
+            {[
+              { key: 'light' as const, label: '白天', Icon: SunIcon },
+              { key: 'dark' as const, label: '黑夜', Icon: MoonIcon },
+            ].map(({ key, label, Icon }) => {
+              const active = mode === key;
+              return (
+                <button
+                  key={key}
+                  type="button"
+                  onClick={() => setMode(key)}
+                  aria-pressed={active}
+                  title={label}
+                  className={cn(
+                    'flex h-8 flex-1 items-center justify-center gap-1.5 rounded-md text-[12px] transition-colors',
+                    active
+                      ? 'bg-surface text-primary shadow-card'
+                      : 'text-tertiary hover:text-secondary',
+                  )}
+                >
+                  <Icon width={15} height={15} />
+                  <span>{label}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      </div>
     </nav>
   );
 }
-

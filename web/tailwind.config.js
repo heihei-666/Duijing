@@ -99,6 +99,12 @@ export default {
       borderColor: {
         light: 'var(--border-light)',
         strong: 'var(--border-strong)',
+        // 复盘卡片三块 / AI 观察角标的描边。
+        // 亮色是浅粉彩（#C5DCC9 等），暗色主题换成压暗版 —— 用变量而不是写死，
+        // 否则暗色下会出现三条刺眼的亮边。
+        'success-border': 'var(--border-success)',
+        'warning-border': 'var(--border-warning)',
+        'info-border': 'var(--border-info)',
         'sticky-ai': 'var(--sticky-ai-border)',
         'sticky-observing': 'var(--sticky-observing-border)',
         'sticky-improving': 'var(--sticky-improving-border)',
