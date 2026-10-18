@@ -161,6 +161,20 @@ export function pauseDebate(id: number): Promise<DebateStatusResult> {
   return apiRequest<DebateStatusResult>(`/debates/${id}/pause`, { method: 'POST' });
 }
 
+/**
+ * 「我卡住了，给我提示」—— 让 AI 给一个能接得住的话头。
+ *
+ * 返回的 `hint` **不落库、不占一轮**：它是用户的私密辅助，
+ * 写进记录会让 AI 下一轮知道「他需要帮助」从而变得小心翼翼，
+ * 也会让复盘把一句提示当成用户的发言来观察。
+ *
+ * 服务端限流与发起辩论同一档（`AI_RATE_PER_MIN`），所以失败时
+ * 可能是 429 —— 调用方要把这个错误原样显示出来。
+ */
+export function getDebateHint(id: number): Promise<{ hint: string }> {
+  return apiRequest<{ hint: string }>(`/debates/${id}/hint`, { method: 'POST' });
+}
+
 /** 继续 */
 export function resumeDebate(id: number): Promise<DebateStatusResult> {
   return apiRequest<DebateStatusResult>(`/debates/${id}/resume`, { method: 'POST' });

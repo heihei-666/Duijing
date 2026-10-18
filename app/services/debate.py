@@ -241,6 +241,45 @@ async def generate_opening(
     return response.text.strip() or "我先开始：这个立场我持保留意见。你怎么看？"
 
 
+# 台阶的兜底文案。
+#
+# 为什么这里和复盘不同、**允许**兜底：复盘的内容会写进弱点库，假的观察会
+# 一路污染数据；而台阶只是一句话头，这一次没生成出来，给一句通用的
+# 也远好过让用户对着「我卡住了」按钮看到一个报错。
+# 它是**消耗品**，不是数据。
+HINT_FALLBACK = "不用急着答完整。先说这件事里最让你不舒服的那一点，一句就行。"
+
+
+async def generate_hint(
+    room: DebateRoom, history, *, level: str = "novice"
+) -> str:
+    """生成一句「台阶」—— 用户点「我卡住了，给我提示」时用。
+
+    只喂最近 6 条消息：台阶是针对**当下这一卡**的，把整场记录塞进去
+    会让模型倾向于总结全场，而用户需要的是下一步。
+
+    ⚠️ 它**不落库**。台阶是用户的私密辅助，不是辩论的一部分：
+    写进记录会让 AI 下一轮知道「他需要帮助」，从而变得小心翼翼，
+    那会破坏对话的自然度，也会让复盘看到一条不存在的发言。
+    """
+    recent = [m for m in history if m.role in ("ai", "user", "system")][-6:]
+    transcript = "\n".join(
+        f"{'AI' if m.role == 'ai' else '用户'}：{m.content}" for m in recent
+    )
+    messages = prompts.build_hint_messages(
+        room.topic, room.stance, transcript, level=level
+    )
+    response = await complete(
+        TASK_DEBATE_REPLY, messages, temperature=0.9, max_tokens=200
+    )
+    hint = (response.text or "").strip()
+    if not hint:
+        logger.warning("台阶生成结果为空 room=%s，用兜底文案", room.id)
+        return HINT_FALLBACK
+    # 限长：prompt 要求 60 字内，但模型不总是听话；太长就不是「一句提示」了
+    return hint[:120]
+
+
 def stream_reply(room: DebateRoom, context: DebateContext, history, latest: str, *, level: str = "novice"):
     """返回异步生成器，逐块吐字。调用方负责把最终文本落库。"""
     from app.ai.router import stream as ai_stream

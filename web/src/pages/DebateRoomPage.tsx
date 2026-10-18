@@ -18,6 +18,7 @@ import {
   countChars,
   dismissDebateObservations,
   finishDebate,
+  getDebateHint,
   getDebateReminder,
   getDebateRoom,
   inviteToDebate,
@@ -95,6 +96,12 @@ export default function DebateRoomPage() {
   const [inviteError, setInviteError] = useState<string | null>(null);
   const [inviteOpen, setInviteOpen] = useState(false);
   const [reviewError, setReviewError] = useState<string | null>(null);
+
+  /* ------------------------------------------------------------ 台阶 */
+  /** AI 给的话头；null = 没有显示中的提示 */
+  const [hint, setHint] = useState<string | null>(null);
+  const [hintLoading, setHintLoading] = useState(false);
+  const [hintError, setHintError] = useState<string | null>(null);
 
   /* ---------------------------------------------- 预约提醒（方案 3.9 唯一触达） */
   const [reminder, setReminder] = useState<DebateReminder | null>(null);
@@ -184,6 +191,9 @@ export default function DebateRoomPage() {
     setMessages([]);
     setReview(null);
     setSaveCardDismissed(false);
+    // 换房间时把上一间的台阶清掉 —— 话头是针对那一卡的
+    setHint(null);
+    setHintError(null);
     pinnedRef.current = true;
 
     void (async () => {
@@ -363,6 +373,27 @@ export default function DebateRoomPage() {
     const lastUser = [...messages].reverse().find((item) => item.role === 'user');
     startStream(lastUser?.seq);
   }, [messages, startStream]);
+
+  /**
+   * 「我卡住了，给我提示」。
+   *
+   * 结果**只进本地状态**，不进 messages —— 台阶不是辩论的一部分
+   * （服务端也不落库，见 POST /api/debates/{id}/hint 的说明）。
+   * 用户一开始打字就自动收起，他会接着自己说下去。
+   */
+  const handleHint = useCallback(async () => {
+    if (hintLoading) return;
+    setHintLoading(true);
+    setHintError(null);
+    try {
+      const result = await getDebateHint(roomId);
+      setHint(result.hint);
+    } catch (cause) {
+      setHintError(cause instanceof Error ? cause.message : '没能拿到提示，请稍后再试');
+    } finally {
+      setHintLoading(false);
+    }
+  }, [roomId, hintLoading]);
 
   /* ------------------------------- 底部提示（含就地操作，由房间状态推导） */
 
@@ -638,6 +669,11 @@ export default function DebateRoomPage() {
           error={actionError}
           notice={notice ?? composerNotice?.text ?? null}
           noticeAction={notice ? null : (composerNotice?.action ?? null)}
+          onHint={() => void handleHint()}
+          hintLoading={hintLoading}
+          hint={hint}
+          hintError={hintError}
+          onDismissHint={() => setHint(null)}
         />
       </div>
 
