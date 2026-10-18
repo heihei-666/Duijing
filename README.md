@@ -112,6 +112,7 @@ cd web && npm install && npm run dev    # :5173，/api 已代理到 3000
 | [docs/CONFIG.md](docs/CONFIG.md) | AI Provider 配置、**失败不降级的设计理由**、成本控制 |
 | [docs/SECURITY.md](docs/SECURITY.md) | 密钥三层防护、泄露应急 |
 | [docs/API.md](docs/API.md) | 前后端契约（改字段先改这里） |
+| [docs/UI-DESIGN.md](docs/UI-DESIGN.md) | 前端视觉规范与主题系统、**Tailwind 类名静默失效的坑**、浏览器验证方法 |
 | [deploy/DEPLOY.md](deploy/DEPLOY.md) | 完整部署手册 |
 | [deploy/CLOUDFLARE-TUNNEL.md](deploy/CLOUDFLARE-TUNNEL.md) | 未备案域名如何让国内用户能访问：隧道原理、实测结论、六个容易卡住的坑 |
 
@@ -211,3 +212,4 @@ python -m evals.run --mode judge      # 需要 Key
 ## 许可
 
 [MIT](LICENSE)
+
