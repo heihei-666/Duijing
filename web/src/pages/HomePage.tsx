@@ -4,7 +4,6 @@ import { useNavigate } from 'react-router-dom';
 import { observationApi, statusApi } from '@/api/client';
 import type { StatusBar, TodayLoop } from '@/api/types';
 import { Button } from '@/components/common/Button';
-import { ActionSection } from '@/features/status-bar/ActionSection';
 import { EnergySheet } from '@/features/status-bar/EnergySheet';
 import { EventCardHero } from '@/features/status-bar/EventCardHero';
 import { GreetingLine } from '@/features/status-bar/GreetingLine';
@@ -14,23 +13,28 @@ import { QuickDebateSheet } from '@/features/status-bar/QuickDebateSheet';
 import { QuickEventCardSheet } from '@/features/status-bar/QuickEventCardSheet';
 import { StatusHeader } from '@/features/status-bar/StatusHeader';
 import { TodayLoopsSection } from '@/features/status-bar/TodayLoopsSection';
+import { useOnboardingStore } from '@/store/onboarding';
 
 /**
- * 首页 = 状态栏（方案 3.7 / API GET /api/status-bar）。
+ * 首页。
  *
- * 【本轮重排的理由（真实用户反馈）】
+ * 【首屏只有两个核心动作】
  *
- * 反馈是「不知道每天来干嘛」。原来首页第一行动是「和 AI 辩一轮」，
- * 门槛高到只有状态最好的那 5 分钟才够得上；而「记一笔」只要一句话。
- * 留存不是靠每天辩一场建立的，是靠「今天也来了一下」建立的。
+ * 用户的原话是「布局出现了严重的功能重叠和视觉打架」。上一版首屏有：
+ * 事件卡（记一笔）、即兴辩论（开始）、AI 观察空态（**又一个记一笔**）、
+ * 底部全宽「和 AI 辩一轮」—— **四个入口，其中两对是重复的**。
  *
- * 所以现在的顺序是：
- *   日期 → 一句问候 → **记一笔（最低门槛）** → 过去的你（锚点）
- *   → 今天练什么 → AI 观察 → 辩一轮（门槛最高，放最后）
+ * 现在收成两个：
+ *   ① 记一笔     —— 最低门槛，了解盲区
+ *   ② 3 分钟辩论 —— 选立场开辩，实战照镜子
+ * 其余一律「有真实数据才出现」：
+ *   · 过去的你  —— 有跨时间的撑住率对比才有意义
+ *   · AI 观察   —— 有真实观察才出现（空态不再占位，它以前和①逐字重复）
+ *   · 今天练什么 —— 有回环才出现（新用户看到的是②那张即兴辩论卡）
  *
  * 分工（每块各自收形，空状态不喧哗）：
  *   记一笔   → QuickEventCardSheet（一句话，不跳页）
- *   今天练什么 → QuickDebateSheet（随机辩题 + 两个立场 → 直接进辩论房）
+ *   3 分钟辩论 → QuickDebateSheet（随机辩题 + 两个立场 → 直接进辩论房）
  *   AI 观察  → 直接在这块里「加入 / 忽略」
  */
 export default function HomePage() {
@@ -47,24 +51,33 @@ export default function HomePage() {
   const [pendingObservationId, setPendingObservationId] = useState<number | null>(null);
   const [observationError, setObservationError] = useState<string | null>(null);
 
-  /** 即兴辩论 / 极简事件卡：两个空状态各自唤起一个 Sheet，都不跳页 */
+  /** 即兴辩论 / 极简事件卡：两个核心动作各唤起一个 Sheet，都不跳页 */
   const [quickDebateOpen, setQuickDebateOpen] = useState(false);
   const [quickRecordOpen, setQuickRecordOpen] = useState(false);
 
+  /** 把「是不是全新用户」同步给全局：导航栏要给弱点/资产挂锁，需要这个值 */
+  const setFresh = useOnboardingStore((s) => s.setFresh);
+
   /** silent = 后台刷新，不切成骨架屏（处理 AI 观察后用） */
-  const load = useCallback(async (silent = false) => {
-    if (!silent) {
-      setLoading(true);
-      setError(null);
-    }
-    try {
-      setData(await statusApi.getStatusBar());
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : '状态栏加载失败');
-    } finally {
-      if (!silent) setLoading(false);
-    }
-  }, []);
+  const load = useCallback(
+    async (silent = false) => {
+      if (!silent) {
+        setLoading(true);
+        setError(null);
+      }
+      try {
+        const next = await statusApi.getStatusBar();
+        setData(next);
+        // 侧边栏靠这个值决定要不要给「弱点 / 资产」挂锁
+        setFresh(next.is_fresh_start === true);
+      } catch (cause) {
+        setError(cause instanceof Error ? cause.message : '状态栏加载失败');
+      } finally {
+        if (!silent) setLoading(false);
+      }
+    },
+    [setFresh],
+  );
 
   useEffect(() => {
     void load();
@@ -128,10 +141,21 @@ export default function HomePage() {
   }
 
   /**
-   * 全新用户：两张卡片都空，且从未留下任何痕迹（由服务端判定）。
-   * 这种情况下底部按钮与卡片内的行动重复，且会稀释焦点，所以隐藏。
+   * 全新用户：从未留下任何痕迹（由服务端判定）。
+   * 只影响两件事：AI 观察卡是否有内容、以及导航栏要不要给弱点/资产挂锁。
    */
   const isFreshStart = data.is_fresh_start === true;
+
+  /**
+   * 「3 分钟辩论」这张卡：**总是在第 2 位**。
+   *
+   * 上一版它只在新用户时以「想不想来一次即兴辩论」的形式出现，
+   * 老用户看到的是回环列表，而「和 AI 辩一轮」被放在页面最底部当第三个入口 ——
+   * 用户的原话是「功能重叠和视觉打架」。
+   * 现在辩论入口固定在第 2 张卡里：有回环就列回环，没回环就推即兴辩论，
+   * 两者都在卡内提供「选立场开辩」。
+   */
+  const hasLoops = data.today_loops.length > 0;
 
   return (
     <div className="space-y-4">
@@ -150,15 +174,16 @@ export default function HomePage() {
       <GreetingLine text={data.greeting} />
 
       {/*
-        入口顺序按**门槛从低到高**排：先一句话（事件卡），再一场辩论。
-        原来第一行动是「和 AI 辩一轮」，它要求用户正好处在状态最好的 5 分钟，
-        而留存从来不是靠那 5 分钟建立的，是靠「今天也来了一下」。
+        ── 核心动作 ①：记一笔 ──────────────────────────────
+        门槛最低，永远排第一。文案由 EventCardHero 自己持有。
       */}
       <EventCardHero onRecord={() => setQuickRecordOpen(true)} />
 
-      {/* 「过去的你」：跨时间对比。历史不足时服务端给 null，整块不渲染 */}
-      {data.past_you ? <PastYouSection data={data.past_you} /> : null}
-
+      {/*
+        ── 核心动作 ②：3 分钟辩论 ──────────────────────────
+        有回环列回环（那是用户自己攒下的东西，比随机辩题更值得看），
+        没有就给即兴辩论入口。两种情况都提供「选立场开辩」。
+      */}
       <TodayLoopsSection
         loops={data.today_loops}
         onSelect={handleSelectLoop}
@@ -166,34 +191,32 @@ export default function HomePage() {
         spacious={isFreshStart}
       />
 
-      <ObservationSection
-        observations={data.observations}
-        pendingId={pendingObservationId}
-        error={observationError}
-        onAccept={(id) => void handleObservation(id, 'accept')}
-        onIgnore={(id) => void handleObservation(id, 'ignore')}
-        // 全新用户**不给**这个按钮：上面已经有「记一笔」主按钮了，
-        // 同屏两个「记一笔」会让人不知道该点哪个（这是看真实截图才发现的，
-        // 光读代码看不出来）。空态退回纯解释文案。
-        onQuickRecord={isFreshStart ? undefined : () => setQuickRecordOpen(true)}
-        spacious={isFreshStart}
-      />
+      {/*
+        ── 过去的你：有跨时间对比才有意义 ──────────────────
+        服务端算不出（历史不足两侧各 2 次触发）就给 null，整块不渲染。
+      */}
+      {data.past_you ? <PastYouSection data={data.past_you} /> : null}
 
       {/*
-        全新用户：底部快捷按钮与卡片里的行动重复，同屏两个主色按钮会稀释焦点，
-        所以这个阶段藏起来，只留卡片里的入口。
-
-        一旦用户留下任何痕迹就恢复——包括「记了几笔事件卡」这种情况：
-        那种用户的两张卡片仍然是空的（事件卡要等夜间扫描才会变成观察），
-        但他显然已经开始用了，不该再按全新用户对待。
+        ── AI 观察：**有真实观察才出现** ────────────────────
+        它的空状态以前和「记一笔」那张卡逐字重复（两段「记录一个你不爽的瞬间，
+        AI 帮你看看盲区」），这就是用户说的「功能完全重复」。
+        现在空的时候整块消失，首页只剩两个动作；有观察才长出来。
       */}
-      {isFreshStart ? (
+      {data.observations.length > 0 ? (
+        <ObservationSection
+          observations={data.observations}
+          pendingId={pendingObservationId}
+          error={observationError}
+          onAccept={(id) => void handleObservation(id, 'accept')}
+          onIgnore={(id) => void handleObservation(id, 'ignore')}
+        />
+      ) : null}
+
+      {/* 全新用户的收尾：不再放任何按钮，只留一句「你来了」 */}
+      {isFreshStart && !hasLoops ? (
         <p className="pt-1 text-center text-[11px] text-disabled">这是你的第一站</p>
-      ) : (
-        // 这里只剩辩论入口：记一笔已经提到首页最上面（EventCardHero），
-        // 同屏两个「记一笔」会让用户犹豫点哪个。
-        <ActionSection onDebate={() => navigate('/debates')} />
-      )}
+      ) : null}
 
       <QuickDebateSheet open={quickDebateOpen} onClose={() => setQuickDebateOpen(false)} />
 
@@ -227,3 +250,4 @@ function HomeSkeleton() {
     </div>
   );
 }
+
