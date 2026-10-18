@@ -65,4 +65,87 @@
   --sticky-ai-icon: #5A7FA8;
   /* 「观察中」便签歪贴角度（配色方案 三·观察中） */
   --sticky-observing-rotate: -1.5deg;
+  /* 便签/复盘卡片描边（亮色是浅粉彩，暗色见文件末尾的暗色块） */
+  --border-success: #C5DCC9;
+  --border-warning: #E0D0B0;
+  --border-info: #C5D3E3;
+  /* 弹层遮罩 */
+  --overlay: rgba(44, 42, 38, 0.32);
 }
+
+/* ==========================================================================
+   暗色主题（data-theme='dark'）
+   ==========================================================================
+   不是简单地把亮色调成纯黑 —— 那会丢掉「一本有质感的笔记本」的基调。
+   这里用的是一套**暖色深底**（#191816 系），和亮色主题一样低饱和。
+
+   为什么用 CSS 变量覆盖而不是 Tailwind 的 dark: 变体：
+   全站颜色都走 tokens（tailwind.config.js 只做「类名 → var(--x)」映射），
+   所以只要翻变量就能整站换肤，**一个组件都不用改**。
+   用 dark: 变体则要在几十个组件里补一遍类名，必然会漏。
+   ========================================================================== */
+[data-theme='dark'] {
+  /* 让原生控件（滚动条、输入框、下拉）也跟着变暗 */
+  color-scheme: dark;
+
+  /* 中性 */
+  --bg-base: #191816;
+  --bg-surface: #22211E;
+  --bg-elevated: #2B2A26;
+  --bg-inset: #33312D;
+  --border-light: #35332E;
+  --border-strong: #4A4741;
+  --text-primary: #EDEAE4;
+  --text-secondary: #A9A49B;
+  --text-tertiary: #7C776F;
+  --text-disabled: #57534C;
+
+  /* 主色：暗底上用**浅色主色 + 深色文字**（反过来对比度不够） */
+  --primary: #8FB0DC;
+  --primary-hover: #A8C3E8;
+  --primary-light: #253246;
+
+  /* 功能 */
+  --success: #86B694;
+  --success-light: #1E2A22;
+  --warning: #D9B571;
+  --warning-light: #2C2517;
+  --danger: #D68D8D;
+  --danger-light: #2C1E1E;
+  --info: #86A9D2;
+  --info-light: #1E2937;
+
+  /* 弱点便签 */
+  --sticky-ai-bg: #1E2733;
+  --sticky-ai-border: #33445A;
+  --sticky-ai-text: #9DBCE0;
+  --sticky-observing-bg: #2A2418;
+  --sticky-observing-border: #4A3F28;
+  --sticky-observing-text: #C8B488;
+  --sticky-improving-bg: #22211E;
+  --sticky-improving-border: #4A4741;
+  --sticky-improving-text: #EDEAE4;
+  --sticky-archived-bg: #2B2A26;
+  --sticky-archived-border: #35332E;
+  --sticky-archived-text: #7C776F;
+
+  /* 撑住率 */
+  --rate-low: #D68D8D;
+  --rate-mid: #D9B571;
+  --rate-good: #86B694;
+  --rate-great: #7FC292;
+
+  /* 主色上的文字：暗色主题的主色是浅蓝，所以字要是深的 */
+  --primary-text: #17191D;
+  --primary-text-muted: rgba(23, 25, 29, 0.72);
+  --sticky-ai-icon: #86A9D2;
+
+  /* 便签/复盘卡片的描边：亮色主题是浅粉彩，暗色要压暗 */
+  --border-success: #3A5244;
+  --border-warning: #55462E;
+  --border-info: #34465C;
+
+  /* 弹层遮罩：暗底上要更重，否则看不清层次 */
+  --overlay: rgba(0, 0, 0, 0.58);
+}
+

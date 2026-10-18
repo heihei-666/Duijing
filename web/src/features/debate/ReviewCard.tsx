@@ -14,11 +14,11 @@ import type { ReviewCardFull } from './api';
  * 这里用精确色值，避免和文档漂移。
  */
 const BLOCK_STYLE = {
-  good: { label: '做得好', box: 'bg-success-light border-[#C5DCC9]', title: 'text-success' },
-  notice: { label: '值得注意', box: 'bg-warning-light border-[#E0D0B0]', title: 'text-warning' },
+  good: { label: '做得好', box: 'bg-success-light border-success-border', title: 'text-success' },
+  notice: { label: '值得注意', box: 'bg-warning-light border-warning-border', title: 'text-warning' },
   next_time: {
     label: '如果再来一次',
-    box: 'bg-info-light border-[#C5D3E3]',
+    box: 'bg-info-light border-info-border',
     title: 'text-info',
   },
 } as const;
@@ -87,7 +87,7 @@ export function ReviewCard({ review, canDismiss, dismissing, error, onDismiss }:
                     className={cn(
                       'mt-[3px] shrink-0 rounded-md border px-1.5 py-0.5 text-[10px] leading-4',
                       weakness
-                        ? 'border-[#E0D0B0] bg-warning-light text-warning'
+                        ? 'border-warning-border bg-warning-light text-warning'
                         : 'border-sticky-ai bg-sticky-ai text-sticky-ai',
                     )}
                   >
@@ -125,3 +125,4 @@ export function ReviewCard({ review, canDismiss, dismissing, error, onDismiss }:
     </section>
   );
 }
+

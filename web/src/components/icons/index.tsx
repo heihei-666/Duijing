@@ -105,3 +105,32 @@ export function LockIcon(props: IconProps) {
     </svg>
   );
 }
+
+/** 设置（齿轮） */
+export function GearIcon(props: IconProps) {
+  return (
+    <svg {...baseProps} width={20} height={20} {...props}>
+      <circle cx="12" cy="12" r="3.2" />
+      <path d="M19.4 14.4a1.5 1.5 0 0 0 .3 1.7l.1.1a1.8 1.8 0 1 1-2.6 2.6l-.1-.1a1.5 1.5 0 0 0-1.7-.3 1.5 1.5 0 0 0-.9 1.4v.2a1.8 1.8 0 1 1-3.6 0v-.1a1.5 1.5 0 0 0-1-1.4 1.5 1.5 0 0 0-1.7.3l-.1.1a1.8 1.8 0 1 1-2.6-2.6l.1-.1a1.5 1.5 0 0 0 .3-1.7 1.5 1.5 0 0 0-1.4-.9h-.2a1.8 1.8 0 1 1 0-3.6h.1a1.5 1.5 0 0 0 1.4-1 1.5 1.5 0 0 0-.3-1.7l-.1-.1a1.8 1.8 0 1 1 2.6-2.6l.1.1a1.5 1.5 0 0 0 1.7.3h.1a1.5 1.5 0 0 0 .9-1.4v-.2a1.8 1.8 0 1 1 3.6 0v.1a1.5 1.5 0 0 0 .9 1.4 1.5 1.5 0 0 0 1.7-.3l.1-.1a1.8 1.8 0 1 1 2.6 2.6l-.1.1a1.5 1.5 0 0 0-.3 1.7v.1a1.5 1.5 0 0 0 1.4.9h.2a1.8 1.8 0 1 1 0 3.6h-.1a1.5 1.5 0 0 0-1.4.9z" />
+    </svg>
+  );
+}
+
+/** 太阳（白天模式） */
+export function SunIcon(props: IconProps) {
+  return (
+    <svg {...baseProps} width={18} height={18} {...props}>
+      <circle cx="12" cy="12" r="4" />
+      <path d="M12 2.6v2.2M12 19.2v2.2M4.3 4.3l1.6 1.6M18.1 18.1l1.6 1.6M2.6 12h2.2M19.2 12h2.2M4.3 19.7l1.6-1.6M18.1 5.9l1.6-1.6" />
+    </svg>
+  );
+}
+
+/** 月亮（黑夜模式） */
+export function MoonIcon(props: IconProps) {
+  return (
+    <svg {...baseProps} width={18} height={18} {...props}>
+      <path d="M20.4 13.4A8.2 8.2 0 0 1 10.6 3.6a8.4 8.4 0 1 0 9.8 9.8z" />
+    </svg>
+  );
+}

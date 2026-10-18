@@ -75,7 +75,7 @@ export function WeaknessNote({ card, onOpen, onAction, highlighted = false }: We
                 event.stopPropagation();
                 onAction(card);
               }}
-              className="-mr-2 flex h-11 w-10 items-center justify-center rounded-lg opacity-70 hover:bg-white/50 hover:opacity-100"
+              className="-mr-2 flex h-11 w-10 items-center justify-center rounded-lg opacity-70 hover:bg-elevated hover:opacity-100"
             >
               <MoreIcon />
             </button>
@@ -125,3 +125,4 @@ function FoldedCorner() {
     />
   );
 }
+

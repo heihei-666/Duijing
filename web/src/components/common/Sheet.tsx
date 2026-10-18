@@ -52,7 +52,7 @@ export function Sheet({ open, title, onClose, children, footer }: SheetProps) {
         type="button"
         aria-label="关闭"
         onClick={onClose}
-        className="absolute inset-0 animate-fade-in cursor-default bg-[rgba(44,42,38,0.32)]"
+        className="absolute inset-0 animate-fade-in cursor-default bg-[var(--overlay)]"
       />
       {/*
         窄屏：贴底、只圆上面两角、上边框分隔、向上投影
@@ -80,3 +80,4 @@ export function Sheet({ open, title, onClose, children, footer }: SheetProps) {
     </div>
   );
 }
+

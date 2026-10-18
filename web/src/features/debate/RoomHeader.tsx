@@ -53,7 +53,7 @@ export function RoomHeader({ room, onBack, backLabel = '返回辩论列表' }: R
         >
           <p className="text-[15px] font-medium leading-snug text-on-brand">{room.topic}</p>
           {room.stance ? (
-            <p className="mt-1 text-[12px] leading-relaxed text-white/75">我的立场：{room.stance}</p>
+            <p className="mt-1 text-[12px] leading-relaxed text-[var(--primary-text-muted)]">我的立场：{room.stance}</p>
           ) : null}
         </div>
       </div>
@@ -74,3 +74,4 @@ export function RoomHeader({ room, onBack, backLabel = '返回辩论列表' }: R
     </header>
   );
 }
+
