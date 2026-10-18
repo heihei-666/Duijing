@@ -158,7 +158,19 @@ export default function HomePage() {
   const hasLoops = data.today_loops.length > 0;
 
   return (
-    <div className="space-y-4">
+    <div className="relative space-y-4">
+      {/*
+        顶部极淡渐变：从「白」过渡到暖灰底。
+        用意不是装饰，而是把首屏第一块（今天的入口）和下面的列表
+        在视觉上分成两个区域 —— 否则整页就是一个颜色的长条。
+        只画到 160px 高、不吃点击（pointer-events-none），
+        往下滚的时候它自然被内容盖过。
+      */}
+      <div
+        aria-hidden
+        className="pointer-events-none absolute -inset-x-4 -top-8 h-44 bg-gradient-to-b from-surface via-surface/60 to-transparent"
+      />
+
       <StatusHeader
         date={data.date}
         weekday={data.weekday}
@@ -250,4 +262,6 @@ function HomeSkeleton() {
     </div>
   );
 }
+
+
 

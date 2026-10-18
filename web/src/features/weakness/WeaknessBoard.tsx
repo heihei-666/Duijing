@@ -395,7 +395,7 @@ function BoardTrash({
       ref={setNodeRef}
       aria-label={`垃圾桶（${cards.length} 条暂存）`}
       className={cn(
-        'mt-3 rounded-xl border-2 border-dashed border-danger p-2.5 transition-colors',
+        'mx-auto mt-4 w-full max-w-sm rounded-xl border-2 border-dashed border-danger p-3 transition-colors',
         highlight ? 'bg-danger-light' : 'bg-base',
       )}
     >
@@ -431,3 +431,4 @@ function BoardTrash({
     </section>
   );
 }
+

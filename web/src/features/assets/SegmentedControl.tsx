@@ -13,7 +13,13 @@ interface SegmentedControlProps<T extends string> {
   onChange: (key: T) => void;
 }
 
-/** 分段控件：资产页四个分区用它切换。触控目标 44px，选中态只用明度差，不加彩色。 */
+/**
+ * 分段控件：资产页四个分区用它切换。触控目标 44px。
+ *
+ * 选中态原来是「白底 + 影子」，在一排浅灰里区分度不够 —— 用户反馈
+ * 看不清当前在哪一页。现在额外加一条 2px 主色短横线（inset-x-4，
+ * 不是整宽，像标签页的下划线），既给出位置感又不改变配色体系。
+ */
 export function SegmentedControl<T extends string>({
   segments,
   value,
@@ -31,7 +37,7 @@ export function SegmentedControl<T extends string>({
             aria-selected={active}
             onClick={() => onChange(segment.key)}
             className={cn(
-              'flex h-11 flex-1 items-center justify-center gap-1 rounded-lg text-[13px] transition-colors',
+              'relative flex h-11 flex-1 items-center justify-center gap-1 rounded-lg text-[13px] transition-colors',
               active ? 'bg-surface text-primary shadow-card' : 'text-secondary hover:text-primary',
             )}
           >
@@ -52,3 +58,4 @@ export function SegmentedControl<T extends string>({
     </div>
   );
 }
+

@@ -40,7 +40,7 @@ export function ObservationSection({
   if (observations.length === 0) return null;
 
   return (
-    <section className="rounded-2xl border border-sticky-ai bg-sticky-ai px-4 py-4">
+    <section className="rounded-2xl border border-sticky-ai bg-sticky-ai p-5 shadow-card">
       <h2 className="text-xs text-sticky-ai">AI 观察</h2>
 
       <ul className="mt-3 space-y-4">
@@ -86,3 +86,4 @@ export function ObservationSection({
     </section>
   );
 }
+
