@@ -29,6 +29,15 @@ get_public_ip() {
 }
 
 DOMAIN="${DOMAIN:-}"
+# 把可能传进来的 `www.` 前缀去掉，统一按**裸域名**处理。
+#
+# 踩过的坑：传 `DOMAIN=www.example.com` 会让证书路径变成
+# `/etc/letsencrypt/live/www.example.com/`（而证书目录叫 `example.com`），
+# 于是脚本以为「没证书」，把 Nginx 降级成 HTTP-only ——
+# 在 Cloudflare Tunnel 指向 https://localhost:443 的架法下，站点当场全挂，
+# 而脚本还会打印「服务器初始化完成」。
+# 顺带也修掉 `server_name www.example.com www.www.example.com` 这种怪值。
+DOMAIN="${DOMAIN#www.}"
 APP_DIR="${APP_DIR:-/opt/duijing}"
 APP_USER="${APP_USER:-app}"
 WEB_ROOT="${WEB_ROOT:-/var/www/duijing/dist}"
@@ -275,12 +284,59 @@ else
   SERVER_NAME="_"   # 无域名：接受任意 Host，便于用 IP 访问
 fi
 
-# 从仓库里的模板生成，替换占位域名
-sed "s/your-domain\.com/$SERVER_NAME/g" "$APP_DIR/deploy/nginx.conf" > /etc/nginx/sites-available/duijing
+NGINX_CONF="/etc/nginx/sites-available/duijing"
+# 证书目录名就是裸域名（enable-https.sh 用 `certbot -d $DOMAIN` 签发）。
+# `DOMAIN` 在脚本开头已经把 `www.` 剥掉了，这里再取一次只是防御性写法 ——
+# 万一将来有人在中间改了 DOMAIN，证书判断也不会静默落空。
+CERT_DOMAIN="${DOMAIN#www.}"
 
-# 未上 HTTPS 时，模板里的 443 server 块会因为证书不存在而让 nginx -t 失败，
-# 所以备案期间先用一份只有 80 端口的精简配置。
-if [ -z "$DOMAIN" ] || [ ! -f "/etc/letsencrypt/live/$DOMAIN/fullchain.pem" ]; then
+# 改之前先留一份，nginx -t 失败时能回滚（见下面）
+if [ -f "$NGINX_CONF" ]; then
+  cp "$NGINX_CONF" "$NGINX_CONF.prev"
+fi
+
+# ── 绝不把已经跑着的 HTTPS 配置降级成 HTTP-only ──────────────
+#
+# 【这是在修一个真实踩过的线上事故】
+#
+# 这台机器现在跑的是「Cloudflare Tunnel → https://localhost:443」。
+# 一旦下面把 Nginx 配置换成只有 80 端口的版本，443 立刻没人监听，
+# **隧道当场 502，站点全挂** —— 而脚本还会打印「服务器初始化完成」，
+# 看起来一切正常，只能靠人访问才知道坏了。
+#
+# 触发条件极其隐蔽：
+#   · 部署时**没传 DOMAIN**（DEPLOY.md 的「日常更新」命令就是没传）
+#   · 或者传成了 `www.example.com`，而证书目录叫 `example.com`
+# 两种都会让下面的证书判断落到「没证书」，进而写 HTTP-only。
+#
+# 所以：只要现有配置里已经有 443 server 块，就**保留不动**。
+# 真要重新生成，先手工删掉 $NGINX_CONF 再跑本脚本。
+EXISTING_HTTPS=0
+if [ -f "$NGINX_CONF" ] && grep -qE '^[[:space:]]*listen[[:space:]]+(\[::\]:)?443' "$NGINX_CONF"; then
+  EXISTING_HTTPS=1
+fi
+
+if [ "$EXISTING_HTTPS" = "1" ] && { [ -z "$DOMAIN" ] || [ ! -f "/etc/letsencrypt/live/$CERT_DOMAIN/fullchain.pem" ]; }; then
+  warn "检测到已有 HTTPS 配置（443 + 证书）：**保留不动**，不重写成 HTTP-only。"
+  warn "  重写会让 Cloudflare Tunnel 指向的 https://localhost:443 立刻失去监听。"
+  warn "  如需重新生成，先删除 $NGINX_CONF 再跑本脚本。"
+else
+  # ── 模板替换：**必须用裸域** ────────────────────────────
+  #
+  # 模板里的 `your-domain.com` 同时出现在 `server_name` 和**证书路径**里
+  # (`/etc/letsencrypt/live/your-domain.com/`)，而证书目录名只能是裸域。
+  # 早先这里直接把 `$SERVER_NAME`（值是 "duijing.xyz www.duijing.xyz"，带空格）
+  # 替换进去，证书路径会变成
+  #   /etc/letsencrypt/live/duijing.xyz www.duijing.xyz/fullchain.pem
+  # —— nginx -t 必挂。这个 bug 一直藏在「已签发证书」这条分支里，
+  # 而默认部署走的是 HTTP-only 分支，所以从来没暴露过。
+  sed "s/your-domain\.com/$DOMAIN/g" "$APP_DIR/deploy/nginx.conf" > "$NGINX_CONF"
+  # 再单独把 server_name 补上 www：模板里 server_name 独占一行，可以安全定位
+  sed -i "s/^\(\s*server_name\s\+\)$DOMAIN;/\1$SERVER_NAME;/" "$NGINX_CONF"
+
+  # 未上 HTTPS 时，模板里的 443 server 块会因为证书不存在而让 nginx -t 失败，
+  # 所以备案期间先用一份只有 80 端口的精简配置。
+  if [ -z "$DOMAIN" ] || [ ! -f "/etc/letsencrypt/live/$CERT_DOMAIN/fullchain.pem" ]; then
   warn "尚未签发证书，使用 HTTP-only 配置（备案通过后运行 enable-https.sh 切换）"
   cat > /etc/nginx/sites-available/duijing <<EOF
 server {
@@ -336,11 +392,47 @@ server {
     location ~ /\.(?!well-known) { deny all; }
 }
 EOF
+  else
+    # ── HTTP/2 指令的版本兼容 ──────────────────────────────
+    #
+    # 模板里写的是 `http2 on;` —— 那是 **nginx 1.25.1 起**才有的独立指令。
+    # Ubuntu 22.04 自带 1.18、24.04 自带 1.24，直接写会报
+    # `unknown directive "http2"`，nginx -t 失败。
+    #
+    # 这个坑在 enable-https.sh 里已经踩过一次并修好了，但那段处理没同步到
+    # 这个脚本，于是「传对 DOMAIN + 证书已存在」这条路径会生成一份
+    # **本机加载不了**的配置 —— 而且文件已经落盘，下次 Nginx 重启就再也起不来。
+    NGINX_VER="$(nginx -v 2>&1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
+    if [ "$(printf '%s\n1.25.1\n' "$NGINX_VER" | sort -V | head -1)" = "1.25.1" ]; then
+      log "nginx $NGINX_VER 支持独立的 http2 指令，保持模板原样"
+    else
+      log "nginx $NGINX_VER 较旧，http2 改写进 listen 指令"
+      sed -i 's|^\(\s*\)listen 443 ssl;|\1listen 443 ssl http2;|' "$NGINX_CONF"
+      sed -i 's|^\(\s*\)listen \[::\]:443 ssl;|\1listen [::]:443 ssl http2;|' "$NGINX_CONF"
+      sed -i '/^\s*http2 on;\s*$/d' "$NGINX_CONF"
+    fi
+  fi
 fi
 
-ln -sf /etc/nginx/sites-available/duijing /etc/nginx/sites-enabled/duijing
+ln -sf "$NGINX_CONF" /etc/nginx/sites-enabled/duijing
 rm -f /etc/nginx/sites-enabled/default
-nginx -t
+
+# nginx -t 失败**必须回滚**：坏配置留在磁盘上，服务器一重启 Nginx 就再也起不来。
+# 这是「改了 A 导致 B 挂掉」里最难恢复的一类 —— 现场看服务还是好的，
+# 真正的故障发生在下一次重启。
+if ! nginx -t; then
+  if [ -f "$NGINX_CONF.prev" ]; then
+    warn "Nginx 配置测试失败，回滚到上一份配置"
+    cp "$NGINX_CONF.prev" "$NGINX_CONF"
+    if nginx -t; then
+      systemctl reload nginx || true
+      warn "已回滚，Nginx 保持原配置运行"
+    else
+      warn "回滚后配置仍不合格 —— 需要人工介入，Nginx 未被重载"
+    fi
+  fi
+  die "Nginx 配置切换失败（详见上面的 nginx -t 输出）"
+fi
 systemctl reload nginx
 systemctl enable nginx >/dev/null 2>&1 || true
 
